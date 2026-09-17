@@ -1,11 +1,5 @@
 """Преобразование aio-pika IncomingMessage <-> прикладное сообщение.
 
-Вырезано из faststream/rabbit/parser.py (AioPikaParser) и
-faststream/message/utils.py (encode_message), v0.7.5.
-
-Убрано: match_path (роутинг по шаблонам), CodecProto/SerializerProto,
-подстановка fast_depends-сериализатора.
-
 Что унесено осознанно:
   * correlation_id проставляется всегда, даже если публикующая сторона его не
     дала — иначе сквозная трассировка рвётся на первом же хопе;

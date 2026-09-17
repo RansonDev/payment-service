@@ -4,14 +4,14 @@
 
 ```
 payments_service/
-├── README.md              — Полная документация (807 строк)
+├── README.md              — Полная документация (1025 строк)
 ├── DEMO.md                — Пошаговая демонстрация работы (328 строк)
 ├── PROJECT_STRUCTURE.md   — Этот файл
 ├── pyproject.toml         — Зависимости и конфигурация всех инструментов
 ├── uv.lock                — Закоммиченный lockfile для uv sync --frozen
 ├── .env.example           — Шаблон переменных окружения
 ├── Dockerfile             — Multi-stage build (5 stages)
-├── docker-compose.yml     — 5 сервисов: app, consumer, outbox, postgres, rabbitmq
+├── docker-compose.yml     — 10 сервисов: app, consumer, outbox-publisher, postgres, rabbitmq, etc.
 ├── Makefile               — 13 targets (install, check, test, docker, demo)
 ├── alembic.ini            — Настройки миграций
 └── webhook_echo.py        — Тестовый вебхук-сервер для демо
@@ -79,9 +79,7 @@ db/
 
 ```
 broker/
-├── aio_pika/              — Вырезанный код из FastStream 0.7.5
-│   ├── NOTICE             — Apache-2.0 лицензия FastStream
-│   ├── README.md          — Карта модулей, отличия от оригинала
+├── aio_pika/              — Слой работы с RabbitMQ на aio-pika
 │   ├── schemas.py         — RabbitQueue, RabbitExchange (декларативное описание)
 │   ├── channel.py         — ChannelManager (пул каналов)
 │   ├── declarer.py        — RabbitDeclarer (идемпотентная декларация)
@@ -98,8 +96,6 @@ broker/
 
 ```
 outbox/
-├── NOTICE                 — MIT лицензия faststream-outbox
-├── README.md              — Обоснование FOR UPDATE SKIP LOCKED, два механизма ретраев
 ├── schema.py              — Таблица outbox_table (SQLAlchemy Table)
 ├── client.py              — OutboxClient (add, fetch_pending, mark_published)
 └── retry.py               — ExponentialRetry (стратегия повторов)
@@ -109,8 +105,6 @@ outbox/
 
 ```
 context/
-├── NOTICE                 — Apache-2.0 лицензия FastStream
-├── README.md              — bind() vs scope(), логирующий фильтр
 ├── repository.py          — ContextRepository (ContextVar на лету)
 └── logging.py             — ExtendedFilter (проброс контекста в логи)
 ```
@@ -186,7 +180,7 @@ tests/
 ├── factories.py             — Polyfactory фабрики (Payment, PaymentDTO)
 ├── test_domain/
 │   └── test_entities/
-│       └── test_payment.py  — Тесты доменной логики (21 тест)
+│       └── test_payment.py  — Тесты доменной логики (14 тестов)
 ├── test_application/
 │   └── test_use_cases/
 │       ├── test_create_payment.py   — CreatePaymentUseCase (3 теста)
@@ -195,7 +189,13 @@ tests/
     └── test_payment_api.py  — API эндпоинты (7 тестов)
 ```
 
-**Всего: 35 unit-тестов с моками. Docker не требуется.**
+**Всего: 28 unit-тестов с моками. Docker не требуется.**
+
+## Интеграционные тесты
+
+Проверяют работу с реальными БД и RabbitMQ. Включают тесты на DLQ, TTL-ретраи и Outbox.
+
+Запуск: `docker compose --profile test run --rm test pytest tests/test_integration/ -v`
 
 ## Docker
 
@@ -209,17 +209,18 @@ Dockerfile                 — 5 stages:
 ```
 
 ```
-docker-compose.yml         — 5 сервисов:
-                             • postgres:16-alpine (порт 5433)
-                             • rabbitmq:4-management (порт 5672, 15672)
+docker-compose.yml         — 10 сервисов:
+                             • postgres:18-alpine (порт 5433)
+                             • rabbitmq:4.2-management (порт 5672, 15672)
                              • app (FastAPI, порт 8000)
                              • consumer (PaymentConsumer)
-                             • outbox (OutboxPublisher)
+                             • outbox-publisher (OutboxPublisher)
 ```
 
 ## Важные служебные файлы
 
 ```
+scripts/                   — Shell-скрипты для Docker (entrypoint.sh)
 .env.example               — Шаблон окружения
 .gitattributes             — LF для shell-скриптов
 .dockerignore              — Исключения для Docker build
@@ -227,24 +228,12 @@ alembic.ini                — Настройки Alembic
 webhook_echo.py            — Тестовый сервер для демо
 ```
 
-## Вырезанный код из сторонних библиотек
-
-**3 пакета с лицензиями:**
-
-| Пакет | Источник | Лицензия | Файлы |
-|---|---|---|---|
-| `broker/aio_pika/` | FastStream 0.7.5 | Apache-2.0 | NOTICE, README.md |
-| `outbox/` | faststream-outbox | MIT | NOTICE, README.md |
-| `context/` | FastStream 0.7.5 | Apache-2.0 | NOTICE, README.md |
-
-**Критично:** Файлы `NOTICE` и `README.md` удалять нельзя — это условие лицензий.
-
 ## Статистика
 
 ```
-95 Python файлов            5353 строки кода
+114 Python файлов            ~5878 строк кода
 79 зависимостей             uv.lock закоммичен
-807 строк README.md         328 строк DEMO.md
+1025 строк README.md        328 строк DEMO.md
 13 Makefile targets         5 Docker stages
 ```
 
@@ -269,7 +258,8 @@ uv run alembic upgrade head
 uv run uvicorn payments_service.main:app --reload
 
 # Полная демонстрация
-docker compose up --build
+docker compose up -d
+# Миграции выполнятся автоматически
 # В другом терминале:
 python webhook_echo.py
 # В третьем терминале:
@@ -290,4 +280,3 @@ python webhook_echo.py
 | Переменные окружения | `.env.example` |
 | Docker-образы | `Dockerfile` |
 | Compose-сервисы | `docker-compose.yml` |
-| Лицензии вырезанного кода | `*/NOTICE`, `*/README.md` в broker/, outbox/, context/ |

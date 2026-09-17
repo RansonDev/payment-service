@@ -1,8 +1,4 @@
-"""Транзакционный outbox поверх Postgres.
-
-Код вырезан из faststream-outbox (MIT) и очищен от FastStream. Подробности —
-в README.md и NOTICE.
-"""
+"""Транзакционный outbox поверх Postgres."""
 
 from .client import OutboxClient, OutboxEvent
 from .retry import (

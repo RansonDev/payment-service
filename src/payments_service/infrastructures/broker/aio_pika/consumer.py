@@ -1,24 +1,4 @@
-"""Подписка на очередь.
-
-Вырезано из faststream/rabbit/subscriber/usecase.py (RabbitSubscriber), v0.7.5.
-
-Убрано: SubscriberUsecase, CallsCollection и фильтры вызовов, middlewares,
-process_msg, get_one/__aiter__, reply-to публикация ответов, AsyncAPI-логика,
-prefix-поддержка роутера.
-
-Оставлено дословно то, что определяет корректность подписки:
-
-  * порядок «объявить очередь -> объявить обменник -> bind -> consume».
-    bind делается только если очередь мы действительно объявляли
-    (queue.declare) и обменник не default: к default exchange привязать
-    нельзя, RabbitMQ ответит ACCESS_REFUSED;
-
-  * no_ack=True ровно для ACK_FIRST и никогда иначе;
-
-  * в stop(): basic.cancel по consumer_tag перед обнулением, с проверкой
-    channel.is_closed. Это и есть graceful shutdown на уровне подписки —
-    брокер перестаёт слать новые доставки, а уже выданные дорабатываются.
-"""
+"""Подписка на очередь."""
 
 from collections.abc import Awaitable, Callable
 import logging

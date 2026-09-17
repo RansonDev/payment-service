@@ -161,6 +161,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      - ./scripts:/app/scripts:ro
       - app_logs:/app/logs
     restart: unless-stopped
     healthcheck:
@@ -202,6 +203,7 @@ services:
     volumes:
       - ./src:/app/src:ro
       - ./tests:/app/tests:ro
+      - ./scripts:/app/scripts:ro
       - ./src/payments_service/infrastructures/db/migrations:/app/src/payments_service/infrastructures/db/migrations:ro
       - ./alembic.ini:/app/alembic.ini:ro
       - app_logs:/app/logs
@@ -279,6 +281,7 @@ services:
     volumes:
       - ./src:/app/src:ro
       - ./tests:/app/tests:ro
+      - ./scripts:/app/scripts:ro
       - ./src/payments_service/infrastructures/db/migrations:/app/src/payments_service/infrastructures/db/migrations:ro
       - ./alembic.ini:/app/alembic.ini:ro
       - test_reports:/app/htmlcov
@@ -301,6 +304,8 @@ services:
       rabbitmq:
         condition: service_healthy
     command: ["python", "-m", "payments_service.workers.consumer"]
+    volumes:
+      - ./scripts:/app/scripts:ro
     healthcheck:
       test: ["CMD-SHELL", "test -e /proc/1/stat"]
       interval: 30s
@@ -325,6 +330,8 @@ services:
       rabbitmq:
         condition: service_healthy
     command: ["python", "-m", "payments_service.workers.outbox_publisher"]
+    volumes:
+      - ./scripts:/app/scripts:ro
     healthcheck:
       test: ["CMD-SHELL", "test -e /proc/1/stat"]
       interval: 30s
@@ -342,6 +349,8 @@ services:
       target: production
     container_name: payments_service-webhook-echo
     command: ["python", "webhook_echo.py"]
+    volumes:
+      - ./scripts:/app/scripts:ro
     ports:
       - "8080:8080"
     networks:

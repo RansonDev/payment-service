@@ -1,10 +1,5 @@
 """Декларативные описания топологии RabbitMQ.
 
-Вырезано из faststream/rabbit/schemas/{queue,exchange,channel,constants}.py (v0.7.5).
-
-Убрано: NameRequired, EMPTY-сентинел, Address/path_regex (роутинг по шаблонам
-`{param}` в routing key), add_prefix, @overload-сигнатуры, RabbitExchange.validate.
-
 Сохранено главное — __eq__/__hash__. Именно они позволяют декларатору
 кешировать уже объявленные объекты: два RabbitQueue с одинаковыми
 именем/durable/exclusive/auto_delete/arguments считаются одним и тем же

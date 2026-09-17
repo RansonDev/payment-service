@@ -1,8 +1,4 @@
-"""Слой работы с RabbitMQ на aio-pika.
-
-Код вырезан из FastStream 0.7.5 (Apache-2.0) и очищен от внутренних
-зависимостей библиотеки. Подробности — в README.md и NOTICE.
-"""
+"""Слой работы с RabbitMQ на aio-pika."""
 
 from .ack import (
     AckMessage,

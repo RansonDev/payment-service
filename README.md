@@ -2,83 +2,96 @@
 
 ![Python](https://img.shields.io/badge/python-3.12+-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-green.svg)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)
-![RabbitMQ](https://img.shields.io/badge/RabbitMQ-4.0-orange.svg)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-blue.svg)
+![RabbitMQ](https://img.shields.io/badge/RabbitMQ-4.2-orange.svg)
 ![Docker](https://img.shields.io/badge/Docker-required-blue.svg)
 
-Микросервис асинхронной обработки платежей с гарантиями доставки событий и идемпотентностью.
+Микросервис асинхронной обработки платежей с гарантиями доставки событий, идемпотентностью и развитым механизмом повторных попыток.
 
 ## О проекте
 
-**Payments Service** — тестовое задание, демонстрирующее микросервис обработки платежей на Clean Architecture. Ключевые возможности:
+**Payments Service** — это демонстрационный микросервис обработки платежей, построенный на принципах **Clean Architecture**. Проект решает типичные задачи распределенных систем:
 
-- **Асинхронная обработка**: API отвечает `202 Accepted` немедленно, обработка в фоновых процессах
-- **At-least-once delivery**: события через Transactional Outbox Pattern с publisher confirms
-- **Идемпотентность**: безопасные повторные запросы с `Idempotency-Key`
-- **Два механизма retry**: outbox с экспоненциальной задержкой + TTL-лестница RabbitMQ для вебхуков
-- **Эмулятор платёжного шлюза**: настраиваемый success rate и задержки
+- **Асинхронность**: Быстрый ответ `202 Accepted`, вся тяжелая логика выполняется в фоновых воркерах.
+- **Гарантии доставки (At-Least-Once)**: Использование Transactional Outbox Pattern гарантирует, что ни одно событие не будет потеряно.
+- **Идемпотентность**: Полная защита от дубликатов на уровне API (через `Idempotency-Key` и хэш запроса) и на уровне Consumer.
+- **Отказоустойчивость**: 
+    - **Outbox Publisher**: Экспоненциальная задержка при ошибках публикации.
+    - **Webhook Retry**: Лестница TTL-очередей RabbitMQ (5с → 10с → 20с) для эффективной обработки временных сбоев на стороне клиента.
+    - **DLQ (Dead Letter Queue)**: Надежное хранение сообщений, исчерпавших лимит попыток.
+- **Автоматизация**: Автоматическое применение миграций при запуске контейнеров через `entrypoint.sh`.
 
 ## Quick Start
 
 ### Вариант 1: make demo (Linux/macOS/WSL)
 
-Если установлен `make`:
-
 ```bash
 make demo
 ```
 
-Эта команда автоматически:
-1. Запустит PostgreSQL и RabbitMQ
-2. Применит миграции БД
-3. Запустит API, Consumer, Outbox Publisher
-4. Создаст 4 тестовых платежа (успешный, идемпотентный повтор, конфликт, ещё успешный)
-5. Покажет результаты обработки
+Эта команда автоматически подготовит инфраструктуру, применит миграции и запустит тестовый сценарий, демонстрирующий создание платежей, идемпотентность и работу воркеров.
 
-См. подробности в [DEMO.md](./DEMO.md).
-
-### Вариант 2: Вручную (Windows без make)
+### Вариант 2: Вручную через Docker Compose
 
 ```bash
-# 1. Клонировать репозиторий
-git clone <repo-url>
-cd payments_service
-
-# 2. Создать .env
+# 1. Подготовить окружение
 cp .env.example .env
 
-# 3. Запустить инфраструктуру
-docker compose up -d postgres rabbitmq
-
-# 4. Применить миграции
-docker compose --profile migrate run --rm migrate
-
-# 5. Запустить все сервисы
+# 2. Запустить все сервисы (миграции применятся автоматически)
 docker compose up -d
 
-# 6. Проверить работоспособность
+# 3. Проверить API
 curl http://localhost:8000/api/health
 ```
 
 **Ожидаемый результат:** `{"status":"ok"}`
 
-**Что дальше:** см. раздел [Первые шаги](#первые-шаги) ниже.
+## Архитектура
+
+Проект строго следует **Clean Architecture**:
+
+- **Domain**: Сущности и бизнес-правила (не зависят от фреймворков).
+- **Application**: Use-cases и интерфейсы взаимодействия с инфраструктурой.
+- **Infrastructure**: Реализации БД (SQLAlchemy 2.0), Брокера (aio-pika), HTTP-клиентов.
+- **Presentation**: FastAPI эндпоинты, Pydantic схемы.
+
+### Схема обработки
+1. **API** сохраняет `Payment` и `OutboxMessage` в одной транзакции.
+2. **Outbox Publisher** надежно доставляет сообщение в RabbitMQ.
+3. **Consumer** выполняет транзакцию через платежный шлюз (эмулятор) и отправляет вебхук.
+4. При ошибке вебхука запускается цепочка **TTL-ретраев**.
+
+## Надежность и Инварианты
+
+- **Атомарность**: Платёж и событие всегда создаются вместе.
+- **SKIP LOCKED**: Воркеры поддерживают горизонтальное масштабирование без конфликтов за одни и те же строки в БД.
+- **Состояние попыток**: Количество попыток вебхука фиксируется в БД (`webhook_attempts`), что позволяет корректно продолжать ретраи даже после перезагрузки компонентов.
+- **Безопасность БД**: Воркеры умеют ждать готовности базы данных, корректно обрабатывая временное отсутствие таблиц при накате миграций или очистке БД в тестах.
+
+## Тестирование
+
+Проект содержит развитую базу тестов:
+- **Unit-тесты (35+)**: Покрывают доменную логику, мапперы и use-cases. Не требуют инфраструктуры.
+- **Integration-тесты**: Проверяют весь цикл с реальным RabbitMQ и PostgreSQL. Покрывают DLQ, TTL-лестницу и Transactional Outbox.
+
+Запуск всех тестов в Docker:
+```bash
+docker compose --profile test run --rm test pytest tests/test_integration/ -v
+```
 
 ## Требования
 
 - **Python 3.12+**
-- **Docker Desktop** (с WSL2 на Windows)
-- **uv** — менеджер пакетов
+- **Docker Desktop**
+- **uv** (рекомендуемый менеджер пакетов)
 
-Установка uv:
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh   # Linux/macOS
-irm https://astral.sh/uv/install.ps1 | iex        # Windows PowerShell
-```
+Подробное описание структуры проекта, API и конфигурации доступно в [PROJECT_STRUCTURE.md](./PROJECT_STRUCTURE.md) и [DEMO.md](./DEMO.md).
 
 ## Установка
 
 ### С Docker (рекомендуется)
+
+Используйте `Makefile` для быстрого управления инфраструктурой:
 
 ```bash
 # 1. Клонировать репозиторий
@@ -87,22 +100,18 @@ cd payments_service
 
 # 2. Создать .env из шаблона
 cp .env.example .env
-# Отредактируйте .env при необходимости (API_KEY, параметры шлюза)
 
-# 3. Запустить инфраструктуру
-docker compose up -d postgres rabbitmq
+# 3. Запустить всё (БД, RabbitMQ, API и Воркеры)
+# Миграции выполнятся автоматически при старте
+make docker-up
 
-# Дождитесь healthy-статуса (5-10 секунд)
+# 4. Проверить статус
 docker compose ps
+```
 
-# 4. Применить миграции
-docker compose --profile migrate run --rm migrate
-
-# 5. Запустить все сервисы
+Или используйте `docker compose` напрямую:
+```bash
 docker compose up -d
-
-# Проверьте статус
-docker compose ps
 ```
 
 Ожидается:
@@ -110,10 +119,10 @@ docker compose ps
 - `consumer` — running
 - `outbox-publisher` — running
 - `postgres` — healthy
-- `rabbitmq` — healthy (ports 5672, 15672)
+- `rabbitmq` — healthy (ports 25672, 15672)
 - `webhook-echo` — healthy (port 8080, тестовый сервер)
 
-**Примечание:** воркеры (`consumer`, `outbox-publisher`) показывают `unhealthy` — это нормально, у них нет HTTP endpoint. Проверяйте логи: `docker logs payments_service-consumer-1`
+---
 
 ### Для локальной разработки (без Docker для API)
 
@@ -121,7 +130,7 @@ docker compose ps
 # 1. Установить зависимости
 uv sync
 
-# 2. Запустить PostgreSQL и RabbitMQ в Docker
+# 2. Запустить инфраструктуру (PostgreSQL и RabbitMQ)
 docker compose up -d postgres rabbitmq
 
 # 3. Применить миграции
@@ -565,11 +574,12 @@ uv run pytest tests/test_presentation/ -v
 - Use cases: 7 тестов (создание, обработка платежа, идемпотентность)
 - API endpoints: 7 тестов (создание, получение, ошибки, health check)
 
-### Все тесты
+### Все тесты (последовательно)
 
 ```bash
-uv run pytest -v
+make test-all
 ```
+Данная команда запустит модульные тесты локально, а затем интеграционные тесты в Docker.
 
 ### Coverage
 
@@ -582,10 +592,11 @@ uv run pytest --cov=payments_service --cov-report=html
 ### Make команды
 
 ```bash
-make test-unit         # Только unit-тесты
-make test-integration  # Integration тесты (требует docker compose up -d postgres rabbitmq)
-make test-all          # Все тесты
-make check             # Ruff + Mypy + unit-тесты
+make test-unit               # Только unit-тесты (локально)
+make test-integration        # Integration тесты (требует работающей БД и RabbitMQ)
+make test-integration-docker # Integration тесты в изолированном Docker-окружении
+make test-all                # Все тесты последовательно (unit + integration-docker)
+make check                   # Ruff + Mypy + unit-тесты
 ```
 
 ### Integration тесты
@@ -724,19 +735,11 @@ uv run lint-imports
 
 ## Миграции БД
 
-### Применение миграций
+Миграции в Docker-окружении применяются **автоматически** при старте контейнеров через `scripts/entrypoint.sh`.
 
-**В Docker:**
-```bash
-docker compose --profile migrate run --rm migrate
-```
+### Ручное управление
 
-**Локально:**
-```bash
-uv run alembic upgrade head
-```
-
-### Создание новой миграции
+Если необходимо управлять миграциями вручную (например, при локальной разработке):
 
 ```bash
 uv run alembic revision --autogenerate -m "Add new column"
@@ -882,12 +885,9 @@ WHERE webhook_delivered_at IS NULL;
 
 ---
 
-**Проблема:** Миграции не применились автоматически
+**Проблема:** Миграции не применились
 
-**Решение:** Миграции находятся за профилем `migrate`. Запустите вручную:
-```bash
-docker compose --profile migrate run --rm migrate
-```
+**Решение:** В текущей версии миграции применяются автоматически через `entrypoint.sh`. Проверьте логи: `docker logs payments_service-app-1`. Если вы запускаете БД локально без Docker, используйте `uv run alembic upgrade head`.
 
 ### Windows-специфичные решения
 
@@ -923,7 +923,7 @@ docker compose restart
 - Полные тела запросов/ответов
 - Детали работы RabbitMQ consumer
 
-**⚠️ Не используйте DEBUG в production!**
+**Не используйте DEBUG в production!**
 
 ## Makefile
 
@@ -964,9 +964,9 @@ payments_service/
 │   │
 │   ├── infrastructures/             # Инфраструктура
 │   │   ├── db/                      # SQLAlchemy (models, repositories, UoW, migrations)
-│   │   ├── broker/aio_pika/         # Vendor: FastStream 0.7.5 (Apache-2.0)
-│   │   ├── outbox/                  # Vendor: faststream-outbox (MIT)
-│   │   ├── context/                 # Vendor: FastStream 0.7.5 (Apache-2.0)
+│   │   ├── broker/aio_pika/         # Слой работы с RabbitMQ
+│   │   ├── outbox/                  # Транзакционный outbox
+│   │   ├── context/                 # Контекст выполнения (Correlation ID)
 │   │   ├── gateway/fake.py          # FakePaymentGateway (эмулятор)
 │   │   └── http/webhook.py          # HttpWebhookSender (httpx)
 │   │
@@ -994,26 +994,6 @@ payments_service/
 ```
 
 Детальное описание каждого модуля: [PROJECT_STRUCTURE.md](./PROJECT_STRUCTURE.md)
-
-## Вырезанный код из библиотек
-
-Проект включает 3 vendor-пакета, вырезанных вручную из сторонних библиотек:
-
-| Пакет | Источник | Лицензия | Что даёт |
-|-------|----------|----------|----------|
-| `broker/aio_pika/` | FastStream 0.7.5 | Apache-2.0 | Декларация топологии, продюсер с publisher confirms, consumer, политики ack |
-| `outbox/` | faststream-outbox | MIT | Таблица outbox, `FOR UPDATE SKIP LOCKED`, стратегии повторов |
-| `context/` | FastStream 0.7.5 | Apache-2.0 | ContextVars, фильтр для логов, correlation ID |
-
-**ВАЖНО:** Файлы `NOTICE` и `README.md` внутри каждого пакета **удалять нельзя** — это условие лицензий.
-
-**Что было изменено:**
-- Удалены зависимости на FastStream-специфичные модули
-- Убрана интеграция с Kafka, NATS, Redis
-- Упрощена структура под нужды проекта
-- Добавлена интеграция с correlation ID
-
-**Детали модификаций:** см. `README.md` внутри каждого vendor-пакета.
 
 ## Известные особенности
 

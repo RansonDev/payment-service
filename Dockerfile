@@ -45,6 +45,10 @@ FROM deps AS production
 COPY --chown=appuser:appuser src/ ./src/
 COPY --chown=appuser:appuser alembic.ini ./
 COPY --chown=appuser:appuser webhook_echo.py ./
+COPY --chown=appuser:appuser scripts/entrypoint.sh /app/entrypoint.sh
+
+# Make entrypoint executable
+RUN chmod +x /app/entrypoint.sh
 
 # Install project itself
 RUN uv sync --frozen --no-dev
@@ -61,6 +65,9 @@ EXPOSE 8000
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
+
+# Default entrypoint
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Default command
 CMD ["uvicorn", "payments_service.main:app", "--host", "0.0.0.0", "--port", "8000"]
@@ -80,6 +87,12 @@ COPY --chown=appuser:appuser alembic.ini ./
 COPY --chown=appuser:appuser tests/ ./tests/
 COPY --chown=appuser:appuser docs/ ./docs/
 COPY --chown=appuser:appuser Makefile ./
+COPY --chown=appuser:appuser scripts/entrypoint.sh /app/entrypoint.sh
+
+# Make entrypoint executable (already done in production stage, but let's be safe for dev-only builds)
+USER root
+RUN chmod +x /app/entrypoint.sh
+USER appuser
 
 # Create necessary directories
 RUN mkdir -p /app/logs /app/htmlcov && chown -R appuser:appuser /app
@@ -89,6 +102,9 @@ USER appuser
 
 # Expose port
 EXPOSE 8000
+
+# Default entrypoint
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Default command for development
 CMD ["uvicorn", "payments_service.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

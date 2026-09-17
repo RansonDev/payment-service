@@ -53,8 +53,6 @@ async def test_db_session(test_db_engine: AsyncEngine):
 
     async with async_session() as session:
         yield session
-        # Rollback removed: TRUNCATE below already cleans up,
-        # and rollback undoes committed changes needed by consumer
 
     # Очистка таблиц после теста
     async with test_db_engine.begin() as conn:
@@ -160,9 +158,10 @@ async def get_queue_message_count(rabbitmq_connection: aio_pika.Connection):
     async def _get_count(queue_name: str) -> int:
         channel = await rabbitmq_connection.channel()
         try:
-            queue = await channel.get_queue(queue_name, ensure=False)
-            result = await queue.declare(passive=True)
-            return result.message_count
+            # В aio-pika declare_queue с passive=True возвращает объект очереди, 
+            # у которого есть атрибут declaration_result (после декларации)
+            queue = await channel.declare_queue(queue_name, passive=True)
+            return queue.declaration_result.message_count
         except Exception:
             return 0
         finally:

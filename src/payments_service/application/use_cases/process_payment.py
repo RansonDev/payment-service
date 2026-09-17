@@ -45,17 +45,22 @@ class ProcessPaymentUseCase:
             PaymentNotFoundError: Платёж не найден.
             WebhookDeliveryError: Техническая ошибка доставки вебхука.
         """
-        # FOR UPDATE для защиты от параллельной обработки дубликатов
+        # 1. Получение и проверка статуса
         async with self.uow:
             payment = await self.uow.payments.get_for_update(payment_id)
-
+ 
         if payment is None:
+            import structlog
+            structlog.get_logger(__name__).error("payment not found", payment_id=str(payment_id))
             return
-
+ 
         # Идемпотентность: вебхук уже доставлен - это дубликат события
         if payment.webhook_delivered_at is not None:
+            import structlog
+            structlog.get_logger(__name__).info("webhook already delivered", payment_id=str(payment_id))
             return
 
+        # 2. Обработка платежа в шлюзе (если еще не обработан)
         if payment.status is PaymentStatus.PENDING:
             result = await self.gateway.charge(payment)
 
@@ -71,8 +76,7 @@ class ProcessPaymentUseCase:
 
                 await self.uow.payments.update(payment)
 
-        # Статус финальный - шлюз уже отработал, отправляем только вебхук
-
+        # 3. Подготовка и отправка вебхука
         event_type = (
             "payment.succeeded"
             if payment.status is PaymentStatus.SUCCEEDED
@@ -95,12 +99,21 @@ class ProcessPaymentUseCase:
             },
         }
 
-        await self.webhook.send(payment.webhook_url, payload)
+        try:
+            await self.webhook.send(payment.webhook_url, payload)
 
-        async with self.uow:
-            payment = await self.uow.payments.get_for_update(payment_id)
-            if payment is None:
-                return
+            # 4. Успешная доставка
+            async with self.uow:
+                payment = await self.uow.payments.get_for_update(payment_id)
+                if payment is not None:
+                    payment.mark_webhook_delivered()
+                    await self.uow.payments.update(payment)
 
-            payment.mark_webhook_delivered()
-            await self.uow.payments.update(payment)
+        except Exception as e:
+            # 5. Ошибка доставки - сохраняем состояние попытки
+            async with self.uow:
+                payment = await self.uow.payments.get_for_update(payment_id)
+                if payment is not None:
+                    payment.register_webhook_failure(str(e))
+                    await self.uow.payments.update(payment)
+            raise

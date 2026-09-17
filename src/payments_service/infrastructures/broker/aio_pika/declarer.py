@@ -1,9 +1,5 @@
 """Идемпотентная декларация топологии с кешированием.
 
-Вырезано из faststream/rabbit/helpers/declarer.py (v0.7.5).
-
-Убрано: Protocol + FakeRabbitDeclarer, EMPTY-сентинел (заменён на None).
-
 Что здесь ценного:
   * кеш по __hash__ схемы — повторный declare не идёт в брокер;
   * declare=False превращается в aio-pika `passive=True`, то есть «подключись

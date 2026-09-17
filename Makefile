@@ -20,9 +20,10 @@ help:
 	@echo "  make format            Auto-format code (ruff format)"
 	@echo "  make migrate           Apply database migrations"
 	@echo "  make test-unit         Run unit tests"
-	@echo "  make test-integration  Run integration tests"
-	@echo "  make test-all          Run all tests"
-	@echo "  make docker-up         Start infrastructure (postgres, rabbitmq)"
+	@echo "  make test-integration  Run integration tests (infrastructure required)"
+	@echo "  make test-integration-docker Run integration tests in Docker"
+	@echo "  make test-all          Run all tests sequentially (unit + integration-docker)"
+	@echo "  make docker-up         Start full infrastructure (API, workers, DB, broker)"
 	@echo "  make docker-down       Stop infrastructure"
 	@echo "  make clean             Clean cache and artifacts"
 	@echo "  make demo              Full demonstration of the service"
@@ -61,18 +62,34 @@ test-unit:
 	$(PYTEST) -m unit -v
 
 test-integration:
-	@echo "Running integration tests..."
+	@echo "Running integration tests (infrastructure required)..."
 	$(PYTEST) -m integration -v
 
+test-integration-docker:
+	@echo "Running integration tests in Docker..."
+	$(DOCKER_COMPOSE) --profile test run --rm test pytest tests/test_integration/ -v
+
 test-all:
-	@echo "Running all tests..."
-	$(PYTEST) -v
+	@echo "Running all tests sequentially..."
+	@echo ""
+	@echo "==> Step 1: Unit tests (Local)"
+	@$(MAKE) test-unit
+	@echo ""
+	@echo "==> Step 2: Integration tests (Docker)"
+	@$(MAKE) test-integration-docker
+	@echo ""
+	@echo "All tests completed!"
 
 docker-up:
-	@echo "Starting infrastructure..."
+	@echo "Starting full infrastructure (API, workers, DB, broker)..."
 	$(DOCKER_COMPOSE) up -d postgres rabbitmq
-	@echo "Waiting for services to be healthy..."
-	@sleep 5
+	@echo "Waiting for core services (8s)..."
+	@powershell -Command "Start-Sleep -Seconds 8"
+	@echo "Starting application and workers..."
+	@echo "Note: Database migrations will be applied automatically via entrypoint.sh"
+	$(DOCKER_COMPOSE) up -d app consumer outbox-publisher webhook-echo
+	@echo "Waiting for services to start (5s)..."
+	@powershell -Command "Start-Sleep -Seconds 5"
 	$(DOCKER_COMPOSE) ps
 	@echo "Infrastructure is up."
 
@@ -83,12 +100,12 @@ docker-down:
 
 clean:
 	@echo "Cleaning cache and artifacts..."
-	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	@find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
-	@find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
-	@find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
-	@find . -type d -name "htmlcov" -exec rm -rf {} + 2>/dev/null || true
-	@find . -type f -name "*.pyc" -delete 2>/dev/null || true
+	@powershell -Command "Get-ChildItem -Recurse -Directory -Filter '__pycache__' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
+	@powershell -Command "Get-ChildItem -Recurse -Directory -Filter '.pytest_cache' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
+	@powershell -Command "Get-ChildItem -Recurse -Directory -Filter '.ruff_cache' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
+	@powershell -Command "Get-ChildItem -Recurse -Directory -Filter '.mypy_cache' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
+	@powershell -Command "Get-ChildItem -Recurse -Directory -Filter 'htmlcov' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
+	@powershell -Command "Get-ChildItem -Recurse -Filter '*.pyc' | Remove-Item -Force -ErrorAction SilentlyContinue"
 	@echo "Cache and artifacts cleaned."
 
 demo:
@@ -96,28 +113,26 @@ demo:
 	@echo "Payments Service - Full Demonstration"
 	@echo "========================================="
 	@echo ""
-	@echo "[1/8] Starting infrastructure (PostgreSQL, RabbitMQ)..."
+	@echo "[1/7] Starting infrastructure (PostgreSQL, RabbitMQ)..."
 	$(DOCKER_COMPOSE) up -d postgres rabbitmq
 	@echo "Waiting for services to be healthy..."
-	@sleep 8
+	@powershell -Command "Start-Sleep -Seconds 8"
 	@echo ""
-	@echo "[2/8] Applying database migrations..."
-	$(DOCKER_COMPOSE) --profile migrate run --rm migrate
-	@echo ""
-	@echo "[3/8] Starting API, Consumer, Outbox Publisher..."
+	@echo "[2/7] Starting API, Consumer, Outbox Publisher..."
+	@echo "Note: Database migrations will be applied automatically via entrypoint.sh"
 	$(DOCKER_COMPOSE) up -d app consumer outbox-publisher webhook-echo
 	@echo "Waiting for services to start..."
-	@sleep 5
+	@powershell -Command "Start-Sleep -Seconds 10"
 	$(DOCKER_COMPOSE) ps
 	@echo ""
-	@echo "[4/8] Creating test payments..."
+	@echo "[3/7] Creating test payments..."
 	@echo ""
 	@echo "==> Payment 1: Successful payment"
 	@curl -s -X POST http://localhost:8000/api/payments \
 		-H "Content-Type: application/json" \
 		-H "X-API-Key: test-api-key-12345" \
 		-H "Idempotency-Key: demo-payment-001" \
-		-d '{"amount": 100.50, "currency": "RUB", "description": "Demo payment #1", "metadata": {"order_id": "001"}, "webhook_url": "http://webhook-echo:8080/hook"}' \
+		-d "{\"amount\": 100.50, \"currency\": \"RUB\", \"description\": \"Demo payment #1\", \"metadata\": {\"order_id\": \"001\"}, \"webhook_url\": \"http://webhook-echo:8080/hook\"}" \
 		| $(PYTHON) -m json.tool
 	@echo ""
 	@echo "==> Payment 2: Idempotent retry (same key, same body)"
@@ -125,7 +140,7 @@ demo:
 		-H "Content-Type: application/json" \
 		-H "X-API-Key: test-api-key-12345" \
 		-H "Idempotency-Key: demo-payment-001" \
-		-d '{"amount": 100.50, "currency": "RUB", "description": "Demo payment #1", "metadata": {"order_id": "001"}, "webhook_url": "http://webhook-echo:8080/hook"}' \
+		-d "{\"amount\": 100.50, \"currency\": \"RUB\", \"description\": \"Demo payment #1\", \"metadata\": {\"order_id\": \"001\"}, \"webhook_url\": \"http://webhook-echo:8080/hook\"}" \
 		| $(PYTHON) -m json.tool
 	@echo ""
 	@echo "==> Payment 3: Idempotency conflict (same key, different body) - expect 409"
@@ -133,7 +148,7 @@ demo:
 		-H "Content-Type: application/json" \
 		-H "X-API-Key: test-api-key-12345" \
 		-H "Idempotency-Key: demo-payment-001" \
-		-d '{"amount": 200.00, "currency": "USD", "description": "Different payment", "metadata": {"order_id": "999"}, "webhook_url": "http://webhook-echo:8080/hook"}' \
+		-d "{\"amount\": 200.00, \"currency\": \"USD\", \"description\": \"Different payment\", \"metadata\": {\"order_id\": \"999\"}, \"webhook_url\": \"http://webhook-echo:8080/hook\"}" \
 		| $(PYTHON) -m json.tool || echo "(Expected 409 Conflict)"
 	@echo ""
 	@echo "==> Payment 4: Another successful payment"
@@ -141,23 +156,23 @@ demo:
 		-H "Content-Type: application/json" \
 		-H "X-API-Key: test-api-key-12345" \
 		-H "Idempotency-Key: demo-payment-002" \
-		-d '{"amount": 250.75, "currency": "EUR", "description": "Demo payment #2", "metadata": {"order_id": "002"}, "webhook_url": "http://webhook-echo:8080/hook"}' \
+		-d "{\"amount\": 250.75, \"currency\": \"EUR\", \"description\": \"Demo payment #2\", \"metadata\": {\"order_id\": \"002\"}, \"webhook_url\": \"http://webhook-echo:8080/hook\"}" \
 		| $(PYTHON) -m json.tool
 	@echo ""
-	@echo "[5/8] Waiting for payment processing (10 seconds)..."
-	@sleep 10
+	@echo "[4/7] Waiting for payment processing (10 seconds)..."
+	@powershell -Command "Start-Sleep -Seconds 10"
 	@echo ""
-	@echo "[6/8] Checking payment statuses..."
+	@echo "[5/7] Checking payment statuses..."
 	@echo ""
 	@echo "==> Health check:"
 	@curl -s http://localhost:8000/api/health | $(PYTHON) -m json.tool
 	@echo ""
-	@echo "[7/8] Checking webhook deliveries..."
+	@echo "[6/7] Checking webhook deliveries..."
 	@echo ""
 	@echo "==> Webhook echo logs (last 30 lines):"
 	@$(DOCKER_COMPOSE) logs webhook-echo --tail 30 | grep -E "(POST|payment_id|status)" || echo "No webhook deliveries yet"
 	@echo ""
-	@echo "[8/8] Service status:"
+	@echo "[7/7] Service status:"
 	@$(DOCKER_COMPOSE) ps
 	@echo ""
 	@echo "========================================="

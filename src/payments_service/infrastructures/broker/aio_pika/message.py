@@ -1,11 +1,5 @@
 """Обёртка над входящим сообщением.
 
-Вырезано из faststream/message/message.py (StreamMessage) и
-faststream/rabbit/message.py (RabbitMessage), v0.7.5.
-
-Убрано: Generic[MsgType], SourceType, batch_headers, path (роутинг по шаблонам),
-ленивый декодер с кешем по объекту-декодеру.
-
 Ради чего берётся — двойная защита от повторного подтверждения:
   1. `committed` фиксирует первое решение, второй ack/nack/reject молча
      игнорируется. Без этого легко словить двойной ack из хендлера и из

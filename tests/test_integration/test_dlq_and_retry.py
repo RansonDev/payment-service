@@ -69,6 +69,7 @@ async def test_retry_mechanism_with_ttl_ladder(
     await test_db_session.commit()
 
     # Publish to payments.new
+    print(f"DEBUG: Publishing message for payment {test_payload['payment_id']}")
     await channel.default_exchange.publish(
         aio_pika.Message(
             body=json.dumps(test_payload).encode(),
@@ -80,22 +81,32 @@ async def test_retry_mechanism_with_ttl_ladder(
     await channel.close()
 
     # Wait and verify progression through retry queues
-    # Note: This test takes ~40 seconds due to TTL delays
+    # Note: This test takes ~45 seconds due to TTL delays (5 + 10 + 20)
 
-    # After ~6 seconds: should be in retry.2
-    await asyncio.sleep(6)
-    retry2_count = await get_queue_message_count("payments.retry.2")
-    assert retry2_count >= 1, "Message should be in retry.2 queue"
+    async def wait_for_queue_count(queue_name: str, expected_count: int = 1, timeout: int = 20):
+        start_time = asyncio.get_running_loop().time()
+        while asyncio.get_running_loop().time() - start_time < timeout:
+            count = await get_queue_message_count(queue_name)
+            if count >= expected_count:
+                return count
+            await asyncio.sleep(0.1)
+        # Final check before failing
+        count = await get_queue_message_count(queue_name)
+        if count >= expected_count:
+            return count
+        raise AssertionError(f"Timeout waiting for {expected_count} messages in {queue_name}. Current count: {count}")
 
-    # After ~16 seconds total: should be in retry.3
-    await asyncio.sleep(11)
-    retry3_count = await get_queue_message_count("payments.retry.3")
-    assert retry3_count >= 1, "Message should be in retry.3 queue"
+    # Initial publish is to payments.new, it fails and should go to retry.1
+    await wait_for_queue_count("payments.retry.1", timeout=15)
 
-    # After ~40 seconds total: should be in DLQ
-    await asyncio.sleep(25)
-    dlq_count = await get_queue_message_count("payments.dlq")
-    assert dlq_count >= 1, "Message should be in DLQ after exhausting retries"
+    # After ~5 seconds in retry.1, it goes back to payments.new, fails and goes to retry.2
+    await wait_for_queue_count("payments.retry.2", timeout=20)
+
+    # After ~10 seconds in retry.2, it goes back to payments.new, fails and goes to retry.3
+    await wait_for_queue_count("payments.retry.3", timeout=25)
+
+    # After ~20 seconds in retry.3, it goes to DLQ
+    await wait_for_queue_count("payments.dlq", timeout=35)
 
 
 @pytest.mark.integration
@@ -121,7 +132,7 @@ async def test_dlq_receives_message_after_retries(
     - x-failure-url: webhook URL that failed
     """
     # Configure webhook server to always fail
-    fake_webhook_server["response_sequence"].extend([500, 500, 500])
+    fake_webhook_server["response_sequence"].extend([500] * 10)
 
     # Create test message
     channel = await rabbitmq_connection.channel()
@@ -204,7 +215,7 @@ async def test_successful_delivery_after_retry(
     - Final attempt succeeds
     - Message does not reach DLQ
     """
-    # Configure webhook server: fail twice, then succeed
+    # Configure webhook server to fail twice, then succeed
     fake_webhook_server["response_sequence"].extend([500, 500, 200])
 
     # Create test message
@@ -246,13 +257,14 @@ async def test_successful_delivery_after_retry(
     await channel.close()
 
     # Wait for retries to complete
-    await asyncio.sleep(20)
+    await asyncio.sleep(50)
 
     # Verify webhook received 3 requests
     webhook_requests = fake_webhook_server["requests"]
     assert len(webhook_requests) >= 3, "Webhook should receive 3 attempts"
 
     # Verify message NOT in DLQ
+    await asyncio.sleep(2)  # Give some time for any potential extra retries
     dlq_count = await get_queue_message_count("payments.dlq")
     assert dlq_count == 0, "Message should NOT be in DLQ after successful delivery"
 
@@ -356,7 +368,7 @@ async def test_end_to_end_with_dlq(
     - outbox.published_at is set
     """
     # Configure webhook server to always fail
-    fake_webhook_server["response_sequence"].extend([500, 500, 500])
+    fake_webhook_server["response_sequence"].extend([500] * 10)
 
     # Simulate payment creation and outbox event
     import json as json_module

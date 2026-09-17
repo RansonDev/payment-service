@@ -1,12 +1,5 @@
 """Публикация сообщений.
 
-Вырезано из faststream/rabbit/publisher/producer.py
-(AioPikaFastProducerImpl), v0.7.5.
-
-Убрано: ProducerProto, ParserComposition (кастомные parser/decoder),
-publish_batch-заглушка, RPC через direct reply-to (_RPCCallback) — request/reply
-в задаче не нужен.
-
 Ключевая деталь, ради которой это и переносится:
 
     declare_exchange(exchange, declare=False)

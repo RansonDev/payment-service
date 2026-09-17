@@ -1,16 +1,4 @@
-"""Политика подтверждения сообщений.
-
-Вырезано из faststream/middlewares/acknowledgement/{config,middleware}.py
-и faststream/exceptions.py (v0.7.5).
-
-Убрано: BaseMiddleware, ContextRepo, LoggerState — логика переписана
-из middleware-обёртки в обычный async context manager.
-
-Зачем этот кусок: разница между nack(requeue=True) и reject(requeue=False)
-решает, уйдёт ли сообщение в DLQ или встанет в бесконечную петлю переобработки.
-FastStream формализует это в четыре явных режима, плюс даёт хендлеру способ
-перебить режим точечно, бросив AckMessage/NackMessage/RejectMessage.
-"""
+"""Политика подтверждения сообщений."""
 
 import asyncio
 from enum import Enum

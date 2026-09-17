@@ -27,6 +27,7 @@ from payments_service.infrastructures.broker.aio_pika.consumer import (
     RabbitConsumer,
 )
 from payments_service.infrastructures.broker.aio_pika.message import RabbitMessage
+from payments_service.infrastructures.broker.aio_pika.ack import NackMessage
 from payments_service.infrastructures.broker.topology import (
     PaymentsTopology,
     declare_topology,
@@ -98,6 +99,7 @@ class PaymentConsumer:
                     "processing payment message",
                     payment_id=str(payment_id),
                     attempt=attempt,
+                    headers=message.headers,
                 )
 
                 async with self.container() as request_container:
@@ -105,7 +107,9 @@ class PaymentConsumer:
                     await use_case(payment_id)
 
                 logger.info(
-                    "payment processed successfully", payment_id=str(payment_id)
+                    "payment processed successfully",
+                    payment_id=str(payment_id),
+                    attempt=attempt,
                 )
 
     async def handle_webhook_error(
@@ -123,17 +127,26 @@ class PaymentConsumer:
         attempt = int(message.headers.get("x-attempt", 0))
         next_attempt = attempt + 1
 
+        try:
+            payload = message.decode()
+            payment_id = payload.get("payment_id")
+        except Exception:
+            payment_id = None
+
         logger.warning(
             "webhook delivery failed",
+            payment_id=payment_id,
             attempt=attempt,
             next_attempt=next_attempt,
             error=str(error),
             url=error.url,
         )
 
+        # attempt 0 -> retry.1, 1 -> retry.2, 2 -> retry.3, 3 -> DLX
         if next_attempt > self.max_attempts:
             logger.error(
                 "max retry attempts exceeded, sending to DLX",
+                payment_id=payment_id,
                 attempt=attempt,
                 max_attempts=self.max_attempts,
             )
@@ -156,6 +169,7 @@ class PaymentConsumer:
 
             logger.info(
                 "publishing to retry queue",
+                payment_id=payment_id,
                 next_attempt=next_attempt,
                 retry_routing_key=retry_routing_key,
             )
@@ -183,7 +197,14 @@ class PaymentConsumer:
         except WebhookDeliveryError as e:
             await self.handle_webhook_error(message, e)
         except Exception as e:
-            logger.exception("unexpected error processing message", error=str(e))
+            # В интеграционных тестах БД может быть временно недоступна (TRUNCATE/DROP)
+            # Если таблицы не существует, делаем nack(requeue=True)
+            err_str = str(e)
+            if "does not exist" in err_str or "relation" in err_str:
+                logger.warning("database table missing, retrying message", error=err_str)
+                raise NackMessage(requeue=True) from e
+
+            logger.exception("unexpected error processing message", error=err_str)
             raise
 
     async def run(self) -> None:
