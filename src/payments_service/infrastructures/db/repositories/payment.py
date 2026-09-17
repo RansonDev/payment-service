@@ -1,0 +1,127 @@
+"""Репозиторий платежей."""
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, final
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+
+from payments_service.application.exceptions import PaymentAlreadyExistsError
+from payments_service.application.interfaces.repositories import (
+    PaymentRepositoryProtocol,
+)
+from payments_service.infrastructures.db.models.payment import Payment as PaymentModel
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from payments_service.domain.entities.payment import Payment as PaymentEntity
+    from payments_service.infrastructures.db.mappers.payment import PaymentDbMapper
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PaymentRepositorySQLAlchemy(PaymentRepositoryProtocol):
+    """Репозиторий платежей на SQLAlchemy."""
+
+    session: "AsyncSession"
+    mapper: "PaymentDbMapper"
+
+    async def add(self, payment: "PaymentEntity") -> None:
+        """Сохранить платёж.
+
+        КРИТИЧЕСКИ ВАЖНО: делает flush() внутри, чтобы IntegrityError по
+        idempotency_key всплывала здесь, а не в __aexit__ UoW.
+
+        Args:
+            payment: Доменная сущность платежа.
+
+        Raises:
+            PaymentAlreadyExistsError: idempotency_key уже занят.
+        """
+        model = self.mapper.to_model(payment)
+        self.session.add(model)
+        try:
+            await self.session.flush()
+        except IntegrityError as e:
+            if "idempotency_key" in str(e.orig):
+                raise PaymentAlreadyExistsError(payment.idempotency_key) from None
+            raise
+
+    async def get_by_id(self, payment_id: UUID) -> "PaymentEntity | None":
+        """Получить платёж по ID.
+
+        Args:
+            payment_id: UUID платежа.
+
+        Returns:
+            Доменная сущность или None.
+        """
+        stmt = select(PaymentModel).where(PaymentModel.id == payment_id)
+        result = await self.session.execute(stmt)
+        model = result.scalar_one_or_none()
+        return self.mapper.to_domain(model) if model else None
+
+    async def get_by_idempotency_key(self, key: str) -> "PaymentEntity | None":
+        """Получить платёж по ключу идемпотентности.
+
+        Args:
+            key: Ключ идемпотентности.
+
+        Returns:
+            Доменная сущность или None.
+        """
+        stmt = select(PaymentModel).where(PaymentModel.idempotency_key == key)
+        result = await self.session.execute(stmt)
+        model = result.scalar_one_or_none()
+        return self.mapper.to_domain(model) if model else None
+
+    async def get_for_update(self, payment_id: UUID) -> "PaymentEntity | None":
+        """Получить платёж с блокировкой строки.
+
+        Использует SELECT FOR UPDATE. Блокировка держится до конца транзакции.
+        Нужен консьюмеру для защиты от параллельной обработки дубликатов.
+
+        Args:
+            payment_id: UUID платежа.
+
+        Returns:
+            Доменная сущность или None.
+        """
+        stmt = (
+            select(PaymentModel).where(PaymentModel.id == payment_id).with_for_update()
+        )
+        result = await self.session.execute(stmt)
+        model = result.scalar_one_or_none()
+        return self.mapper.to_domain(model) if model else None
+
+    async def update(self, payment: "PaymentEntity") -> None:
+        """Обновить существующий платёж.
+
+        Args:
+            payment: Доменная сущность с изменениями.
+        """
+        stmt = select(PaymentModel).where(PaymentModel.id == payment.id)
+        result = await self.session.execute(stmt)
+        model = result.scalar_one_or_none()
+
+        if model is None:
+            model = self.mapper.to_model(payment)
+            self.session.add(model)
+        else:
+            model.amount = payment.amount
+            model.currency = payment.currency
+            model.description = payment.description
+            model.payment_metadata = payment.payment_metadata
+            model.status = payment.status
+            model.idempotency_key = payment.idempotency_key
+            model.request_hash = payment.request_hash
+            model.webhook_url = payment.webhook_url
+            model.created_at = payment.created_at
+            model.processed_at = payment.processed_at
+            model.webhook_delivered_at = payment.webhook_delivered_at
+            model.webhook_attempts = payment.webhook_attempts
+            model.webhook_last_error = payment.webhook_last_error
+
+        await self.session.flush()

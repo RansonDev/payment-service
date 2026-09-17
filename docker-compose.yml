@@ -1,0 +1,365 @@
+# YAML Anchors for common configurations
+x-common-healthcheck: &common-healthcheck
+  interval: 10s
+  timeout: 5s
+  retries: 5
+
+# Network configuration is handled individually per service
+
+x-common-volume: &common-volume
+  driver: local
+
+x-app-environment: &app-environment
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  DEBUG: ${DEBUG:-false}
+  API_KEY: ${API_KEY}
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  POSTGRES_SERVER: ${POSTGRES_SERVER}
+  POSTGRES_PORT: ${POSTGRES_PORT}
+  POSTGRES_DB: ${POSTGRES_DB}
+  BROKER_URL: ${BROKER_URL}
+  BROKER_PREFETCH_COUNT: ${BROKER_PREFETCH_COUNT:-10}
+  RETRY_TTL_LEVEL_1_MS: ${RETRY_TTL_LEVEL_1_MS:-5000}
+  RETRY_TTL_LEVEL_2_MS: ${RETRY_TTL_LEVEL_2_MS:-10000}
+  RETRY_TTL_LEVEL_3_MS: ${RETRY_TTL_LEVEL_3_MS:-20000}
+  GATEWAY_SUCCESS_RATE: ${GATEWAY_SUCCESS_RATE:-0.9}
+  GATEWAY_MIN_DELAY_SECONDS: ${GATEWAY_MIN_DELAY_SECONDS:-2.0}
+  GATEWAY_MAX_DELAY_SECONDS: ${GATEWAY_MAX_DELAY_SECONDS:-5.0}
+  WEBHOOK_TIMEOUT_SECONDS: ${WEBHOOK_TIMEOUT_SECONDS:-5.0}
+  WEBHOOK_MAX_RETRIES: ${WEBHOOK_MAX_RETRIES:-3}
+
+x-app-dev-environment: &app-dev-environment
+  ENVIRONMENT: ${ENVIRONMENT:-dev}
+  LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+  DEBUG: ${DEBUG:-true}
+  API_KEY: ${API_KEY}
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  POSTGRES_SERVER: ${POSTGRES_SERVER}
+  POSTGRES_PORT: ${POSTGRES_PORT}
+  POSTGRES_DB: ${POSTGRES_DB}
+  BROKER_URL: ${BROKER_URL}
+  BROKER_PREFETCH_COUNT: ${BROKER_PREFETCH_COUNT:-10}
+  RETRY_TTL_LEVEL_1_MS: ${RETRY_TTL_LEVEL_1_MS:-5000}
+  RETRY_TTL_LEVEL_2_MS: ${RETRY_TTL_LEVEL_2_MS:-10000}
+  RETRY_TTL_LEVEL_3_MS: ${RETRY_TTL_LEVEL_3_MS:-20000}
+  GATEWAY_SUCCESS_RATE: ${GATEWAY_SUCCESS_RATE:-0.9}
+  GATEWAY_MIN_DELAY_SECONDS: ${GATEWAY_MIN_DELAY_SECONDS:-2.0}
+  GATEWAY_MAX_DELAY_SECONDS: ${GATEWAY_MAX_DELAY_SECONDS:-5.0}
+  WEBHOOK_TIMEOUT_SECONDS: ${WEBHOOK_TIMEOUT_SECONDS:-5.0}
+  WEBHOOK_MAX_RETRIES: ${WEBHOOK_MAX_RETRIES:-3}
+
+# Test environment configuration is handled individually per service
+
+# Migration configuration is handled individually per service
+
+services:
+
+  postgres:
+    image: postgres:18-alpine
+    container_name: payments_service-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      <<: *common-healthcheck
+    networks:
+      - payments_service-network
+
+  postgres-test:
+    image: postgres:18-alpine
+    container_name: payments_service-postgres-test
+    environment:
+      POSTGRES_DB: payments_test
+      POSTGRES_USER: payments
+      POSTGRES_PASSWORD: payments
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payments -d payments_test"]
+      <<: *common-healthcheck
+    networks:
+      - payments_service-network
+    profiles:
+      - test
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  rabbitmq:
+    image: rabbitmq:4.2-management
+    container_name: payments_service-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "25672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - payments_service-network
+
+
+
+
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: payments_service-app
+    environment:
+      <<: *app-environment
+    depends_on:
+
+      postgres:
+        condition: service_healthy
+
+
+
+
+
+
+
+
+
+      rabbitmq:
+        condition: service_healthy
+
+
+    ports:
+      - "8000:8000"
+    volumes:
+      - app_logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - payments_service-network
+
+  app-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: payments_service-app-dev
+    environment:
+      <<: *app-dev-environment
+    depends_on:
+
+      postgres:
+        condition: service_healthy
+
+
+
+
+
+
+
+
+
+      rabbitmq:
+        condition: service_healthy
+
+
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./src:/app/src:ro
+      - ./tests:/app/tests:ro
+      - ./src/payments_service/infrastructures/db/migrations:/app/src/payments_service/infrastructures/db/migrations:ro
+      - ./alembic.ini:/app/alembic.ini:ro
+      - app_logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - payments_service-network
+    profiles:
+      - dev
+
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: payments_service-migrate
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./scripts:/app/scripts:ro
+    command: ["bash", "/app/scripts/migrate.sh"]
+    networks:
+      - payments_service-network
+    profiles:
+      - migrate
+
+
+
+
+
+
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: testing
+    container_name: payments_service-test
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-testing}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DEBUG: ${DEBUG:-false}
+      API_KEY: ${API_KEY}
+      POSTGRES_USER: payments
+      POSTGRES_PASSWORD: payments
+      POSTGRES_SERVER: postgres-test
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: payments_test
+      BROKER_URL: ${BROKER_URL}
+      BROKER_PREFETCH_COUNT: ${BROKER_PREFETCH_COUNT:-10}
+      RETRY_TTL_LEVEL_1_MS: ${RETRY_TTL_LEVEL_1_MS:-5000}
+      RETRY_TTL_LEVEL_2_MS: ${RETRY_TTL_LEVEL_2_MS:-10000}
+      RETRY_TTL_LEVEL_3_MS: ${RETRY_TTL_LEVEL_3_MS:-20000}
+      GATEWAY_SUCCESS_RATE: ${GATEWAY_SUCCESS_RATE:-0.9}
+      GATEWAY_MIN_DELAY_SECONDS: ${GATEWAY_MIN_DELAY_SECONDS:-2.0}
+      GATEWAY_MAX_DELAY_SECONDS: ${GATEWAY_MAX_DELAY_SECONDS:-5.0}
+      WEBHOOK_TIMEOUT_SECONDS: ${WEBHOOK_TIMEOUT_SECONDS:-5.0}
+      WEBHOOK_MAX_RETRIES: ${WEBHOOK_MAX_RETRIES:-3}
+    depends_on:
+
+      postgres-test:
+        condition: service_healthy
+
+
+
+
+
+
+
+    volumes:
+      - ./src:/app/src:ro
+      - ./tests:/app/tests:ro
+      - ./src/payments_service/infrastructures/db/migrations:/app/src/payments_service/infrastructures/db/migrations:ro
+      - ./alembic.ini:/app/alembic.ini:ro
+      - test_reports:/app/htmlcov
+    networks:
+      - payments_service-network
+    profiles:
+      - test
+
+  consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: payments_service-consumer
+    environment:
+      <<: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    command: ["python", "-m", "payments_service.workers.consumer"]
+    restart: unless-stopped
+    networks:
+      - payments_service-network
+
+  outbox-publisher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: payments_service-outbox-publisher
+    environment:
+      <<: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    command: ["python", "-m", "payments_service.workers.outbox_publisher"]
+    restart: unless-stopped
+    networks:
+      - payments_service-network
+
+  webhook-echo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: payments_service-webhook-echo
+    command: ["python", "webhook_echo.py"]
+    ports:
+      - "8080:8080"
+    networks:
+      - payments_service-network
+    restart: unless-stopped
+
+volumes:
+
+  postgres_data:
+    <<: *common-volume
+
+
+
+
+
+
+
+
+
+  rabbitmq_data:
+    <<: *common-volume
+
+
+
+  app_logs:
+    <<: *common-volume
+
+
+  test_reports:
+    <<: *common-volume
+
+
+networks:
+  payments_service-network:
+    driver: bridge
