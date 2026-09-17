@@ -199,7 +199,8 @@ class PaymentConsumer:
         except Exception as e:
             err_str = str(e)
             logger.exception("unexpected error processing message", error=err_str)
-            raise
+            # Возвращаем в очередь при системных ошибках, чтобы избежать DLQ
+            raise NackMessage(requeue=True) from e
 
     async def run(self) -> None:
         """Запустить консьюмер."""

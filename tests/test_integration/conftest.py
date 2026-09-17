@@ -12,7 +12,17 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
+from dishka import make_async_container
+
+from payments_service.config.ioc.di import get_providers
+from payments_service.config.settings import Settings
+from payments_service.infrastructures.broker.aio_pika.connection import RabbitConnection
+from payments_service.infrastructures.broker.topology import (
+    PaymentsTopology,
+    declare_topology,
+)
 from payments_service.infrastructures.db.models.base import Base
+from payments_service.workers.consumer import PaymentConsumer
 
 
 @pytest.fixture
@@ -70,13 +80,52 @@ async def rabbitmq_connection() -> AsyncGenerator[aio_pika.Connection, None]:
     rabbit_user = os.getenv("RABBITMQ_USER", "guest")
     rabbit_password = os.getenv("RABBITMQ_PASSWORD", "guest")
 
-    connection = await aio_pika.connect_robust(
-        f"amqp://{rabbit_user}:{rabbit_password}@{rabbit_host}:{rabbit_port}/"
-    )
+    url = f"amqp://{rabbit_user}:{rabbit_password}@{rabbit_host}:{rabbit_port}/"
+    connection = await aio_pika.connect_robust(url)
+
+    # Гарантируем наличие топологии перед тестами
+    settings = Settings()
+    rabbit_conn = RabbitConnection(url=url)
+    await rabbit_conn.connect()
+    await declare_topology(rabbit_conn, settings.broker)
+    await rabbit_conn.stop()
 
     yield connection
 
     await connection.close()
+
+
+@pytest.fixture(autouse=True)
+async def run_consumer(rabbitmq_connection: aio_pika.Connection):
+    """Run payment consumer in background for integration tests."""
+    # Получаем URL из существующего подключения
+    url = str(rabbitmq_connection.url)
+    settings = Settings()
+
+    container = make_async_container(*get_providers())
+    rabbit_conn = RabbitConnection(url=url)
+    await rabbit_conn.connect()
+
+    consumer = PaymentConsumer(
+        rabbit_connection=rabbit_conn,
+        container=container,
+        settings=settings,
+    )
+
+    task = asyncio.create_task(consumer.run())
+
+    # Даем консьюмеру немного времени на старт
+    await asyncio.sleep(1)
+
+    yield consumer
+
+    await consumer.stop()
+    try:
+        await asyncio.wait_for(task, timeout=5.0)
+    except asyncio.TimeoutError:
+        pass
+    await rabbit_conn.stop()
+    await container.close()
 
 
 @pytest.fixture

@@ -74,7 +74,7 @@ async def test_retry_mechanism_with_ttl_ladder(
         aio_pika.Message(
             body=json.dumps(test_payload).encode(),
             content_type="application/json",
-            headers={"x-attempt": "1"},
+            headers={},
         ),
         routing_key="payments.new",
     )
@@ -176,7 +176,7 @@ async def test_dlq_receives_message_after_retries(
         aio_pika.Message(
             body=json.dumps(test_payload).encode(),
             content_type="application/json",
-            headers={"x-attempt": "1"},
+            headers={},
         ),
         routing_key="payments.new",
     )
@@ -260,7 +260,7 @@ async def test_successful_delivery_after_retry(
         aio_pika.Message(
             body=json.dumps(test_payload).encode(),
             content_type="application/json",
-            headers={"x-attempt": "1"},
+            headers={},
         ),
         routing_key="payments.new",
     )
@@ -435,7 +435,7 @@ async def test_end_to_end_with_dlq(
         aio_pika.Message(
             body=json.dumps(outbox_event_payload).encode(),
             content_type="application/json",
-            headers={"x-attempt": "1"},
+            headers={},
         ),
         routing_key="payments.new",
     )
