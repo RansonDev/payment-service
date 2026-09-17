@@ -1,6 +1,6 @@
 from datetime import UTC
-from faker import Faker
 
+from faker import Faker
 
 _faker = Faker()
 

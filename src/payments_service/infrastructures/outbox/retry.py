@@ -80,7 +80,10 @@ class _RetryStrategyTemplate(ABC, RetryStrategyProto):
         if self.max_attempts is not None and self.max_attempts < 1:
             msg = f"max_attempts must be >= 1 if set, got {self.max_attempts}"
             raise ValueError(msg)
-        if self.max_total_delay_seconds is not None and self.max_total_delay_seconds <= 0:
+        if (
+            self.max_total_delay_seconds is not None
+            and self.max_total_delay_seconds <= 0
+        ):
             msg = f"max_total_delay_seconds must be > 0 if set, got {self.max_total_delay_seconds}"
             raise ValueError(msg)
 
@@ -136,7 +139,9 @@ class ConstantRetry(_RetryStrategyTemplate):
     def _delay_seconds(self, *, attempts_count: int) -> float:  # noqa: ARG002
         delay = self.delay_seconds
         if self.jitter_factor:
-            delay *= 1.0 + self._random.uniform(-self.jitter_factor / 2, self.jitter_factor / 2)
+            delay *= 1.0 + self._random.uniform(
+                -self.jitter_factor / 2, self.jitter_factor / 2
+            )
         return delay
 
 
@@ -158,9 +163,13 @@ class LinearRetry(_RetryStrategyTemplate):
         _validate_jitter_factor(self.jitter_factor)
 
     def _delay_seconds(self, *, attempts_count: int) -> float:
-        delay = self.initial_delay_seconds + self.step_seconds * max(0, attempts_count - 1)
+        delay = self.initial_delay_seconds + self.step_seconds * max(
+            0, attempts_count - 1
+        )
         if self.jitter_factor:
-            delay *= 1.0 + self._random.uniform(-self.jitter_factor / 2, self.jitter_factor / 2)
+            delay *= 1.0 + self._random.uniform(
+                -self.jitter_factor / 2, self.jitter_factor / 2
+            )
         return delay
 
 
@@ -187,7 +196,9 @@ class ExponentialRetry(_RetryStrategyTemplate):
 
     def _delay_seconds(self, *, attempts_count: int) -> float:
         try:
-            delay = self.initial_delay_seconds * (self.multiplier ** max(0, attempts_count - 1))
+            delay = self.initial_delay_seconds * (
+                self.multiplier ** max(0, attempts_count - 1)
+            )
         except OverflowError:
             # An unbounded exponential eventually overflows float (``2.0 ** 1024``).
             # Saturate at the absolute ceiling rather than letting the strategy
@@ -195,7 +206,9 @@ class ExponentialRetry(_RetryStrategyTemplate):
             delay = _MAX_DELAY_SECONDS
         # Jitter before clamp so max_delay_seconds is the true ceiling.
         if self.jitter_factor:
-            delay *= 1.0 + self._random.uniform(-self.jitter_factor / 2, self.jitter_factor / 2)
+            delay *= 1.0 + self._random.uniform(
+                -self.jitter_factor / 2, self.jitter_factor / 2
+            )
         if self.max_delay_seconds is not None:
             delay = min(delay, self.max_delay_seconds)
         # Absolute backstop so an unbounded config can't emit a delay Postgres'

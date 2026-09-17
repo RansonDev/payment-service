@@ -1,13 +1,13 @@
-from polyfactory.factories import DataclassFactory
+from datetime import UTC, datetime, timezone
 from decimal import Decimal
-from datetime import datetime
 
-from tests.faker import uuid4, word, text, url
+from polyfactory.factories import DataclassFactory
 
-from payments_service.domain.entities.payment import Payment
 from payments_service.application.dtos.payment import PaymentDTO
+from payments_service.domain.entities.payment import Payment
 from payments_service.domain.value_objects.currency import Currency
 from payments_service.domain.value_objects.payment_status import PaymentStatus
+from tests.faker import text, url, uuid4, word
 
 
 class PaymentFactory(DataclassFactory[Payment]):
@@ -62,7 +62,7 @@ class PaymentFactory(DataclassFactory[Payment]):
     @classmethod
     def created_at(cls) -> datetime:
         """Generate created_at timestamp."""
-        return datetime.utcnow()
+        return datetime.now(UTC)
 
 
 class PaymentDTOFactory(DataclassFactory[PaymentDTO]):
@@ -117,4 +117,4 @@ class PaymentDTOFactory(DataclassFactory[PaymentDTO]):
     @classmethod
     def created_at(cls) -> datetime:
         """Generate created_at timestamp."""
-        return datetime.utcnow()
+        return datetime.now(UTC)

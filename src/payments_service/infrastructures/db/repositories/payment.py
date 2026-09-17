@@ -1,16 +1,18 @@
 """Репозиторий платежей."""
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timezone
 from typing import TYPE_CHECKING, final
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from payments_service.application.exceptions import PaymentAlreadyExistsError
 from payments_service.application.interfaces.repositories import (
     PaymentRepositoryProtocol,
 )
+from payments_service.domain.value_objects.payment_status import PaymentStatus
 from payments_service.infrastructures.db.models.payment import Payment as PaymentModel
 
 if TYPE_CHECKING:
@@ -77,25 +79,6 @@ class PaymentRepositorySQLAlchemy(PaymentRepositoryProtocol):
         model = result.scalar_one_or_none()
         return self.mapper.to_domain(model) if model else None
 
-    async def get_for_update(self, payment_id: UUID) -> "PaymentEntity | None":
-        """Получить платёж с блокировкой строки.
-
-        Использует SELECT FOR UPDATE. Блокировка держится до конца транзакции.
-        Нужен консьюмеру для защиты от параллельной обработки дубликатов.
-
-        Args:
-            payment_id: UUID платежа.
-
-        Returns:
-            Доменная сущность или None.
-        """
-        stmt = (
-            select(PaymentModel).where(PaymentModel.id == payment_id).with_for_update()
-        )
-        result = await self.session.execute(stmt)
-        model = result.scalar_one_or_none()
-        return self.mapper.to_domain(model) if model else None
-
     async def update(self, payment: "PaymentEntity") -> None:
         """Обновить существующий платёж.
 
@@ -125,3 +108,33 @@ class PaymentRepositorySQLAlchemy(PaymentRepositoryProtocol):
             model.webhook_last_error = payment.webhook_last_error
 
         await self.session.flush()
+
+    async def try_mark_processed(
+        self, payment_id: UUID, status: PaymentStatus, message: str | None
+    ) -> bool:
+        """Записать результат, только если платёж ещё в PENDING."""
+        stmt = (
+            update(PaymentModel)
+            .where(PaymentModel.id == payment_id)
+            .where(PaymentModel.status == PaymentStatus.PENDING)
+            .values(
+                status=status,
+                processed_at=datetime.now(UTC),
+                webhook_last_error=message if status == PaymentStatus.FAILED else None,
+            )
+        )
+        result = await self.session.execute(stmt)
+        return result.rowcount > 0
+
+    async def try_mark_webhook_delivered(self, payment_id: UUID) -> bool:
+        """Отметить доставку вебхука, только если она еще не была отмечена."""
+        stmt = (
+            update(PaymentModel)
+            .where(PaymentModel.id == payment_id)
+            .where(PaymentModel.webhook_delivered_at.is_(None))
+            .values(
+                webhook_delivered_at=datetime.now(UTC),
+            )
+        )
+        result = await self.session.execute(stmt)
+        return result.rowcount > 0

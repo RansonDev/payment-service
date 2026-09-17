@@ -3,8 +3,8 @@
 Тесты используют моки вместо реальных БД и брокера.
 """
 
+from datetime import UTC, datetime, timezone
 from decimal import Decimal
-from datetime import datetime
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
@@ -28,7 +28,6 @@ from payments_service.presentation.api.rest.error_handling import (
     setup_exception_handlers,
 )
 from payments_service.presentation.api.rest.v1.routers import api_v1_router
-
 
 # Global mocks that will be configured per test
 _mock_create_payment_use_case: AsyncMock | None = None
@@ -96,15 +95,13 @@ def test_app() -> FastAPI:
 async def test_client(test_app: FastAPI) -> AsyncClient:
     """Create test HTTP client."""
     transport = ASGITransport(app=test_app)  # type: ignore[arg-type]
-    async with AsyncClient(
-        transport=transport, base_url="http://testserver"
-    ) as client:
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         yield client
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_create_payment_api(test_app: FastAPI, test_client: AsyncClient) -> None:
+async def test_create_payment_api(test_client: AsyncClient) -> None:
     """Тест создания платежа через API."""
     # Arrange
     global _mock_create_payment_use_case
@@ -121,7 +118,7 @@ async def test_create_payment_api(test_app: FastAPI, test_client: AsyncClient) -
         idempotency_key="integration-test-key-001",
         request_hash="test-hash",
         webhook_url="http://example.com/webhook",
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(UTC),
         processed_at=None,
         webhook_delivered_at=None,
         webhook_attempts=0,
@@ -154,15 +151,13 @@ async def test_create_payment_api(test_app: FastAPI, test_client: AsyncClient) -
     assert response.status_code == 202
     data = response.json()
     assert "payment_id" in data
-    assert data["status"] == "PENDING"  # PaymentStatus.PENDING enum value
+    assert data["status"] == "pending"  # PaymentStatus.PENDING enum value
     assert "created_at" in data
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_create_payment_idempotency(
-    test_app: FastAPI, test_client: AsyncClient
-) -> None:
+async def test_create_payment_idempotency(test_client: AsyncClient) -> None:
     """Тест идемпотентности создания платежа."""
     # Arrange
     global _mock_create_payment_use_case
@@ -179,7 +174,7 @@ async def test_create_payment_idempotency(
         idempotency_key="integration-test-key-002",
         request_hash="test-hash",
         webhook_url="http://example.com/webhook",
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(UTC),
         processed_at=None,
         webhook_delivered_at=None,
         webhook_attempts=0,
@@ -229,9 +224,7 @@ async def test_create_payment_idempotency(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_create_payment_idempotency_conflict(
-    test_app: FastAPI, test_client: AsyncClient
-) -> None:
+async def test_create_payment_idempotency_conflict(test_client: AsyncClient) -> None:
     """Тест конфликта идемпотентного ключа с разным телом."""
     # Arrange
     global _mock_create_payment_use_case
@@ -248,7 +241,7 @@ async def test_create_payment_idempotency_conflict(
         idempotency_key="integration-test-key-003",
         request_hash="hash1",
         webhook_url="http://example.com/webhook",
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(UTC),
         processed_at=None,
         webhook_delivered_at=None,
         webhook_attempts=0,
@@ -304,7 +297,7 @@ async def test_create_payment_idempotency_conflict(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_get_payment_api(test_app: FastAPI, test_client: AsyncClient) -> None:
+async def test_get_payment_api(test_client: AsyncClient) -> None:
     """Тест получения информации о платеже."""
     # Arrange
     global _mock_get_payment_use_case
@@ -318,11 +311,11 @@ async def test_get_payment_api(test_app: FastAPI, test_client: AsyncClient) -> N
         "currency": "RUB",  # str
         "description": "Get payment test",
         "payment_metadata": {"order_id": "test-999"},
-        "status": "PENDING",  # str
+        "status": "pending",  # str
         "idempotency_key": "integration-test-key-004",
         "request_hash": "test-hash",
         "webhook_url": "http://example.com/webhook",
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.now(UTC),
         "processed_at": None,
         "webhook_delivered_at": None,
         "webhook_attempts": 0,
@@ -330,7 +323,9 @@ async def test_get_payment_api(test_app: FastAPI, test_client: AsyncClient) -> N
     }
 
     # Возвращаем PaymentDTO но Pydantic будет использовать from_attributes
-    payment_dto = type('PaymentDTO', (), payment_response)()  # Create object with attributes
+    payment_dto = type(
+        "PaymentDTO", (), payment_response
+    )()  # Create object with attributes
     _mock_get_payment_use_case.return_value = payment_dto
 
     # Act
@@ -346,15 +341,13 @@ async def test_get_payment_api(test_app: FastAPI, test_client: AsyncClient) -> N
     assert data["amount"] == "100.50"  # str in response
     assert data["currency"] == "RUB"
     assert data["description"] == "Get payment test"
-    assert data["status"] == "PENDING"  # Enum value as string
+    assert data["status"] == "pending"  # Enum value as string
     assert data["payment_metadata"] == {"order_id": "test-999"}
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_get_payment_not_found(
-    test_app: FastAPI, test_client: AsyncClient
-) -> None:
+async def test_get_payment_not_found(test_client: AsyncClient) -> None:
     """Тест получения несуществующего платежа."""
     # Arrange
     global _mock_get_payment_use_case

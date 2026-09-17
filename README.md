@@ -8,6 +8,18 @@
 
 Микросервис асинхронной обработки платежей с гарантиями доставки событий, идемпотентностью и развитым механизмом повторных попыток.
 
+## Quick Start
+
+### Запуск одной командой
+```bash
+# Клонировать и запустить (требуется Docker)
+docker compose up -d
+```
+Сервис будет доступен по адресу: http://localhost:8000/api/health
+Документация: http://localhost:8000/api/docs
+
+---
+
 ## О проекте
 
 **Payments Service** — это демонстрационный микросервис обработки платежей, построенный на принципах **Clean Architecture**. Проект решает типичные задачи распределенных систем:
@@ -21,32 +33,7 @@
     - **DLQ (Dead Letter Queue)**: Надежное хранение сообщений, исчерпавших лимит попыток.
 - **Автоматизация**: Автоматическое применение миграций при запуске контейнеров через `entrypoint.sh`.
 
-## Quick Start
-
-### Вариант 1: make demo (Linux/macOS/WSL)
-
-```bash
-make demo
-```
-
-Эта команда автоматически подготовит инфраструктуру, применит миграции и запустит тестовый сценарий, демонстрирующий создание платежей, идемпотентность и работу воркеров.
-
-### Вариант 2: Вручную через Docker Compose
-
-```bash
-# 1. Подготовить окружение
-cp .env.example .env
-
-# 2. Запустить все сервисы (миграции применятся автоматически)
-docker compose up -d
-
-# 3. Проверить API
-curl http://localhost:8000/api/health
-```
-
-**Ожидаемый результат:** `{"status":"ok"}`
-
-## Архитектура
+## Установка
 
 Проект строго следует **Clean Architecture**:
 
@@ -85,7 +72,7 @@ docker compose --profile test run --rm test pytest tests/test_integration/ -v
 - **Docker Desktop**
 - **uv** (рекомендуемый менеджер пакетов)
 
-Подробное описание структуры проекта, API и конфигурации доступно в [PROJECT_STRUCTURE.md](./PROJECT_STRUCTURE.md) и [DEMO.md](./DEMO.md).
+Подробное описание структуры проекта, API и конфигурации доступно в разделах [Структура проекта](#структура-проекта) и [Демонстрация](#демонстрация).
 
 ## Установка
 
@@ -367,10 +354,10 @@ WHERE o.id IS NULL;
 - **API:** повторные запросы с одинаковым `Idempotency-Key` и `request_hash` возвращают существующий платёж. Разные `request_hash` с тем же ключом → `409 Conflict`.
 - **Consumer:** проверяет `webhook_delivered_at` (если `not None` — выход), затем `status` (если финальный — пропуск шлюза, только вебхук).
 
-### 4. FOR UPDATE SKIP LOCKED
+### 4. Атомарные обновления и блокировки
 
 - **Outbox publisher:** `fetch_pending()` использует `FOR UPDATE SKIP LOCKED` для защиты от параллельной обработки одного события несколькими экземплярами publisher.
-- **Consumer:** `get_for_update()` использует `FOR UPDATE` для защиты от дубликатов сообщений в RabbitMQ.
+- **Consumer:** использует атомарные обновления статуса в БД (`UPDATE ... WHERE status = 'pending'`) для защиты от гонок при параллельной обработке дубликатов сообщений. Вызов внешнего шлюза вынесен за пределы транзакции.
 
 ### 5. Сессия БД в Scope.REQUEST
 
@@ -390,7 +377,7 @@ WHERE o.id IS NULL;
 
 ### 9. Неуспешный платёж — не повод для retry
 
-Это бизнес-результат (`status=FAILED`) и финальное состояние. Повторяются только технические сбои доставки вебхука (таймаут, сетевая ошибка, ответ не 2xx). Вебхук уходит и для успешного, и для неуспешного платежа.
+Это бизнес-результат (`status=failed`) и финальное состояние. Повторяются только технические сбои доставки вебхука (таймаут, сетевая ошибка, ответ не 2xx). Вебхук уходит и для успешного, и для неуспешного платежа.
 
 ## API Reference
 
@@ -940,20 +927,24 @@ make test-all          # Все тесты
 make docker-up         # Запустить инфраструктуру (postgres, rabbitmq)
 make docker-down       # Остановить инфраструктуру
 make clean             # Очистить кеш и артефакты
-make demo              # Полная демонстрация сервиса
+make demo              # Полная демонстрация сервиса (альтернатива: docker compose up -d)
 make logs              # Показать логи всех сервисов
 ```
 
-**Для Windows без make:** см. [DEMO.md](./DEMO.md) для запуска команд вручную.
+**Для Windows без make:** используйте `docker compose up -d`. Полный сценарий см. в разделе [Демонстрация](#демонстрация).
 
 ## Структура проекта
 
+<details>
+<summary>Посмотреть детальную структуру проекта</summary>
+
+### Корень проекта
 ```
 payments_service/
 ├── src/payments_service/
 │   ├── domain/                      # Доменная логика
-│   │   ├── entities/payment.py      # Сущность Payment (mutable dataclass)
-│   │   ├── value_objects/           # Currency, PaymentStatus (Enums)
+│   │   ├── entities/payment.py      # Сущность Payment
+│   │   ├── value_objects/           # Currency, PaymentStatus
 │   │   └── exceptions.py            # Доменные исключения
 │   │
 │   ├── application/                 # Слой приложения
@@ -975,25 +966,34 @@ payments_service/
 │   ├── config/                      # Settings, Logging, DI (Dishka)
 │   └── main.py                      # FastAPI app, точка входа
 │
-├── tests/                           # 28 unit-тестов с моками
-│   ├── test_domain/                 # 14 тестов доменной логики
-│   ├── test_application/            # 7 тестов use-cases
-│   └── test_presentation/           # 7 тестов API
-│
+├── tests/                           # Unit и интеграционные тесты
 ├── scripts/                         # Shell-скрипты для Docker
+├── tools/                           # Вспомогательные инструменты (webhook_echo.py)
 ├── .env.example                     # Шаблон переменных окружения
-├── pyproject.toml                   # Конфигурация проекта (uv, ruff, mypy)
-├── uv.lock                          # Lockfile (коммитится!)
+├── pyproject.toml                   # Конфигурация проекта
+├── uv.lock                          # Lockfile
 ├── Dockerfile                       # Multi-stage build
-├── docker-compose.yml               # 5 сервисов
+├── docker-compose.yml               # Compose-сервисы
 ├── alembic.ini                      # Конфигурация Alembic
-├── Makefile                         # 13 команд
-├── DEMO.md                          # Пошаговая демонстрация
-├── PROJECT_STRUCTURE.md             # Детальная структура (детали вырезанного кода)
-└── README.md                        # Этот файл
+└── Makefile                         # Команды автоматизации
 ```
 
-Детальное описание каждого модуля: [PROJECT_STRUCTURE.md](./PROJECT_STRUCTURE.md)
+### Где искать что
+
+| Что ищешь | Где смотреть |
+|---|---|
+| Бизнес-правила платежа | `domain/entities/payment.py` |
+| API-эндпоинты | `presentation/api/rest/v1/controllers/payment_controller.py` |
+| Логика создания платежа | `application/use_cases/create_payment.py` |
+| SQL-модель | `infrastructures/db/models/payment.py` |
+| RabbitMQ топология | `infrastructures/broker/topology.py` |
+| Миграции БД | `infrastructures/db/migrations/versions/` |
+| DI-конфигурация | `config/ioc/providers.py` |
+| Переменные окружения | `.env.example` |
+| Docker-образы | `Dockerfile` |
+| Compose-сервисы | `docker-compose.yml` |
+
+</details>
 
 ## Известные особенности
 
@@ -1017,17 +1017,36 @@ docker logs payments_service-outbox-publisher-1 --tail 20
 
 ## Демонстрация
 
-Полный сценарий демонстрации с объяснением каждого шага: **[DEMO.md](./DEMO.md)**
+<details>
+<summary>Посмотреть полный сценарий демонстрации</summary>
 
-Демо показывает:
-- Асинхронную обработку платежей (API → Outbox → RabbitMQ → Consumer → Gateway → Webhook)
-- Transactional Outbox Pattern (атомарность платеж + событие)
-- Идемпотентность API (повторные запросы, конфликты ключей)
-- At-least-once delivery с publisher confirms
-- Retry mechanism для вебхуков (TTL-лестница: 5s → 10s → 20s → DLQ)
-- Correlation ID для сквозного трейсинга
+### Запуск вручную
 
-**Дополнительные сценарии:**
-- Эмуляция отказа шлюза (`GATEWAY_SUCCESS_RATE=0.0`)
-- Проверка DLQ после неудачных вебхуков
-- Мониторинг через RabbitMQ Management UI
+1. **Запуск инфраструктуры:**
+   ```bash
+   docker compose up -d
+   ```
+
+2. **Создание успешного платежа:**
+   ```bash
+   curl -X POST http://localhost:8000/api/payments \
+     -H "Content-Type: application/json" \
+     -H "X-API-Key: test-api-key-12345" \
+     -H "Idempotency-Key: demo-payment-001" \
+     -d "{\"amount\": 100.50, \"currency\": \"RUB\", \"description\": \"Demo #1\", \"webhook_url\": \"http://webhook-echo:8080/hook\"}"
+   ```
+
+3. **Проверка идемпотентности (повтор того же запроса):**
+   Должен вернуть тот же `payment_id`.
+
+4. **Проверка результатов:**
+   - Health check: `curl http://localhost:8000/api/health`
+   - Логи вебхуков: `docker compose logs webhook-echo`
+
+### Что демонстрирует проект
+- **Асинхронная обработка**: API отвечает сразу, шлюз вызывается в воркере.
+- **Transactional Outbox**: Гарантированная публикация событий.
+- **Retry & DLQ**: Автоматические повторы вебхуков через RabbitMQ TTL queues.
+- **Идемпотентность**: Защита от дублей на всех уровнях.
+
+</details>

@@ -19,6 +19,7 @@ from payments_service.application.use_cases.process_payment import ProcessPaymen
 from payments_service.config.ioc.di import get_providers
 from payments_service.config.logging import setup_logging
 from payments_service.config.settings import Settings
+from payments_service.infrastructures.broker.aio_pika.ack import NackMessage
 from payments_service.infrastructures.broker.aio_pika.connection import (
     RabbitConnection,
 )
@@ -27,7 +28,6 @@ from payments_service.infrastructures.broker.aio_pika.consumer import (
     RabbitConsumer,
 )
 from payments_service.infrastructures.broker.aio_pika.message import RabbitMessage
-from payments_service.infrastructures.broker.aio_pika.ack import NackMessage
 from payments_service.infrastructures.broker.topology import (
     PaymentsTopology,
     declare_topology,
@@ -197,13 +197,7 @@ class PaymentConsumer:
         except WebhookDeliveryError as e:
             await self.handle_webhook_error(message, e)
         except Exception as e:
-            # В интеграционных тестах БД может быть временно недоступна (TRUNCATE/DROP)
-            # Если таблицы не существует, делаем nack(requeue=True)
             err_str = str(e)
-            if "does not exist" in err_str or "relation" in err_str:
-                logger.warning("database table missing, retrying message", error=err_str)
-                raise NackMessage(requeue=True) from e
-
             logger.exception("unexpected error processing message", error=err_str)
             raise
 

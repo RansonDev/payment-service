@@ -5,8 +5,8 @@
 
 import logging
 
-import uvicorn
 from fastapi import FastAPI, Request
+import uvicorn
 
 # Настроить простое логирование
 logging.basicConfig(
@@ -51,4 +51,4 @@ async def health_check() -> dict[str, str]:
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    uvicorn.run(app, host="0.0.0.0", port=8080)  # noqa: S104

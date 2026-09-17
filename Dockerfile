@@ -44,7 +44,7 @@ FROM deps AS production
 # Copy application code
 COPY --chown=appuser:appuser src/ ./src/
 COPY --chown=appuser:appuser alembic.ini ./
-COPY --chown=appuser:appuser webhook_echo.py ./
+COPY --chown=appuser:appuser tools/ ./tools/
 COPY --chown=appuser:appuser scripts/entrypoint.sh /app/entrypoint.sh
 
 # Make entrypoint executable

@@ -146,7 +146,10 @@ class OutboxPublisher:
                 # В интеграционных тестах БД может быть временно недоступна (TRUNCATE/DROP)
                 err_str = str(exc)
                 if "does not exist" in err_str or "relation" in err_str:
-                    logger.warning("database table missing in outbox publisher, retrying", error=err_str)
+                    logger.warning(
+                        "database table missing in outbox publisher, retrying",
+                        error=err_str,
+                    )
                 else:
                     logger.exception("error in publish batch", error=err_str)
                 await asyncio.sleep(self.poll_interval)

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from payments_service.domain.entities.payment import Payment as PaymentEntity
+    from payments_service.domain.value_objects.payment_status import PaymentStatus
 
 
 class PaymentRepositoryProtocol(Protocol):
@@ -38,16 +39,25 @@ class PaymentRepositoryProtocol(Protocol):
     async def get_by_idempotency_key(self, key: str) -> "PaymentEntity | None": ...
 
     @abstractmethod
-    async def get_for_update(self, payment_id: "UUID") -> "PaymentEntity | None":
-        """Прочитать платёж, заблокировав строку до конца транзакции.
+    async def update(self, payment: "PaymentEntity") -> None: ...
 
-        Нужен консьюмеру: две параллельные доставки одного сообщения не должны
-        одновременно менять статус платежа.
+    @abstractmethod
+    async def try_mark_processed(
+        self, payment_id: "UUID", status: "PaymentStatus", message: str | None
+    ) -> bool:
+        """Записать результат, только если платёж ещё в PENDING.
+
+        Возвращает False, если платёж уже обработан другой доставкой.
         """
         ...
 
     @abstractmethod
-    async def update(self, payment: "PaymentEntity") -> None: ...
+    async def try_mark_webhook_delivered(self, payment_id: "UUID") -> bool:
+        """Отметить доставку вебхука, только если она ещё не отмечена.
+
+        Возвращает False, если доставка уже была отмечена.
+        """
+        ...
 
 
 class OutboxRepositoryProtocol(Protocol):

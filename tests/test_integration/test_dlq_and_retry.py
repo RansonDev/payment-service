@@ -9,8 +9,8 @@ Tests verify:
 
 import asyncio
 import json
-import uuid
 from typing import Any
+import uuid
 
 import aio_pika
 import pytest
@@ -23,11 +23,12 @@ from payments_service.infrastructures.db.models.payment import Payment
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("clean_queues")
 async def test_retry_mechanism_with_ttl_ladder(
     test_db_session,
     rabbitmq_connection: aio_pika.Connection,
-    clean_queues,
     get_queue_message_count,
+    get_dlq_messages,
 ):
     """Test retry mechanism goes through TTL ladder: retry.1→retry.2→retry.3→DLQ.
 
@@ -58,7 +59,7 @@ async def test_retry_mechanism_with_ttl_ladder(
         amount=100.0,
         currency="RUB",
         description="Retry ladder test",
-        status="PENDING",
+        status="pending",
         idempotency_key=f"test-retry-{test_payload['payment_id']}",
         request_hash="test-hash-retry",
         webhook_url="http://unreachable-host-12345.local/webhook",
@@ -69,11 +70,11 @@ async def test_retry_mechanism_with_ttl_ladder(
     await test_db_session.commit()
 
     # Publish to payments.new
-    print(f"DEBUG: Publishing message for payment {test_payload['payment_id']}")
     await channel.default_exchange.publish(
         aio_pika.Message(
             body=json.dumps(test_payload).encode(),
             content_type="application/json",
+            headers={"x-attempt": "1"},
         ),
         routing_key="payments.new",
     )
@@ -83,38 +84,48 @@ async def test_retry_mechanism_with_ttl_ladder(
     # Wait and verify progression through retry queues
     # Note: This test takes ~45 seconds due to TTL delays (5 + 10 + 20)
 
-    async def wait_for_queue_count(queue_name: str, expected_count: int = 1, timeout: int = 20):
+    async def wait_for_queue_count(
+        queue_name: str, expected_count: int = 1, timeout: int = 20
+    ):
         start_time = asyncio.get_running_loop().time()
         while asyncio.get_running_loop().time() - start_time < timeout:
             count = await get_queue_message_count(queue_name)
             if count >= expected_count:
                 return count
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.5)
         # Final check before failing
-        count = await get_queue_message_count(queue_name)
-        if count >= expected_count:
-            return count
-        raise AssertionError(f"Timeout waiting for {expected_count} messages in {queue_name}. Current count: {count}")
+        return await get_queue_message_count(queue_name)
 
     # Initial publish is to payments.new, it fails and should go to retry.1
-    await wait_for_queue_count("payments.retry.1", timeout=15)
+    count = await wait_for_queue_count("payments.retry.1", timeout=15)
+    assert count >= 1, f"Message should reach retry.1, but count is {count}"
 
     # After ~5 seconds in retry.1, it goes back to payments.new, fails and goes to retry.2
-    await wait_for_queue_count("payments.retry.2", timeout=20)
+    count = await wait_for_queue_count("payments.retry.2", timeout=20)
+    assert count >= 1, f"Message should reach retry.2, but count is {count}"
 
     # After ~10 seconds in retry.2, it goes back to payments.new, fails and goes to retry.3
-    await wait_for_queue_count("payments.retry.3", timeout=25)
+    count = await wait_for_queue_count("payments.retry.3", timeout=25)
+    assert count >= 1, f"Message should reach retry.3, but count is {count}"
 
     # After ~20 seconds in retry.3, it goes to DLQ
-    await wait_for_queue_count("payments.dlq", timeout=35)
+    count = await wait_for_queue_count("payments.dlq", timeout=35)
+    assert count >= 1, f"Message should reach DLQ, but count is {count}"
+
+    # Final verification of DLQ message content
+    dlq_messages = await get_dlq_messages()
+    assert len(dlq_messages) >= 1
+    msg = dlq_messages[0]
+    assert msg.headers.get("x-attempt") == "3"
+    assert "x-death" in msg.headers
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("clean_queues")
 async def test_dlq_receives_message_after_retries(
     test_db_session,
     rabbitmq_connection: aio_pika.Connection,
-    clean_queues,
     get_dlq_messages,
     fake_webhook_server: dict[str, Any],
 ):
@@ -151,7 +162,7 @@ async def test_dlq_receives_message_after_retries(
         amount=250.0,
         currency="EUR",
         description="DLQ headers test",
-        status="PENDING",
+        status="pending",
         idempotency_key=f"test-dlq-{test_payload['payment_id']}",
         request_hash="test-hash-dlq",
         webhook_url=fake_webhook_server["url"],
@@ -195,10 +206,10 @@ async def test_dlq_receives_message_after_retries(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("clean_queues")
 async def test_successful_delivery_after_retry(
     test_db_session,
     rabbitmq_connection: aio_pika.Connection,
-    clean_queues,
     fake_webhook_server: dict[str, Any],
     get_queue_message_count,
 ):
@@ -235,7 +246,7 @@ async def test_successful_delivery_after_retry(
         amount=500.0,
         currency="USD",
         description="Successful retry test",
-        status="PENDING",
+        status="pending",
         idempotency_key=f"test-success-{test_payload['payment_id']}",
         request_hash="test-hash-success",
         webhook_url=fake_webhook_server["url"],
@@ -271,8 +282,8 @@ async def test_successful_delivery_after_retry(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("test_db_engine")
 async def test_outbox_mechanism(
-    test_db_engine: AsyncEngine,
     test_db_session,
 ):
     """Test Outbox mechanism: create event, fetch, and mark as published.
@@ -289,7 +300,9 @@ async def test_outbox_mechanism(
     - published_at is set correctly
     """
     import json as json_module
-    from sqlalchemy import insert, select as sql_select
+
+    from sqlalchemy import insert
+    from sqlalchemy import select as sql_select
 
     from payments_service.infrastructures.db.models import outbox_table
     from payments_service.infrastructures.outbox.client import OutboxClient
@@ -347,10 +360,10 @@ async def test_outbox_mechanism(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("clean_queues")
 async def test_end_to_end_with_dlq(
     test_db_session,
     rabbitmq_connection: aio_pika.Connection,
-    clean_queues,
     get_dlq_messages,
     fake_webhook_server: dict[str, Any],
 ):
@@ -372,6 +385,7 @@ async def test_end_to_end_with_dlq(
 
     # Simulate payment creation and outbox event
     import json as json_module
+
     from sqlalchemy import insert as sql_insert
 
     from payments_service.infrastructures.db.models import outbox_table
@@ -384,7 +398,7 @@ async def test_end_to_end_with_dlq(
         amount=1000.0,
         currency="RUB",
         description="End-to-end DLQ test",
-        status="PENDING",
+        status="pending",
         idempotency_key="e2e-dlq-test-001",
         request_hash="test-hash-e2e",
         webhook_url=fake_webhook_server["url"],
@@ -441,7 +455,7 @@ async def test_end_to_end_with_dlq(
     )
     payment_check = result.scalar_one()
 
-    assert payment_check.status == "SUCCEEDED", "Payment should be in succeeded state"
+    assert payment_check.status == "succeeded", "Payment should be in succeeded state"
     assert payment_check.webhook_delivered_at is None, "Webhook should not be delivered"
 
     # Verify webhook was attempted 3 times

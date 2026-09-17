@@ -6,6 +6,6 @@ from enum import Enum
 class PaymentStatus(str, Enum):
     """Статус платежа."""
 
-    PENDING = "PENDING"
-    SUCCEEDED = "SUCCEEDED"
-    FAILED = "FAILED"
+    PENDING = "pending"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"

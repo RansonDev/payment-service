@@ -1,7 +1,7 @@
 """Доменная сущность: платёж."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -32,7 +32,7 @@ class Payment:
     idempotency_key: str
     request_hash: str
     webhook_url: str
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     processed_at: datetime | None = None
     webhook_delivered_at: datetime | None = None
     webhook_attempts: int = 0
@@ -64,7 +64,7 @@ class Payment:
         if self.status is not PaymentStatus.PENDING:
             raise InvalidPaymentTransitionError(self.id, self.status)
         self.status = PaymentStatus.SUCCEEDED
-        self.processed_at = datetime.utcnow()
+        self.processed_at = datetime.now(UTC)
 
     def mark_failed(self, reason: str) -> None:
         """Отметить платёж как неуспешный.
@@ -78,12 +78,12 @@ class Payment:
         if self.status is not PaymentStatus.PENDING:
             raise InvalidPaymentTransitionError(self.id, self.status)
         self.status = PaymentStatus.FAILED
-        self.processed_at = datetime.utcnow()
+        self.processed_at = datetime.now(UTC)
         self.webhook_last_error = reason
 
     def mark_webhook_delivered(self) -> None:
         """Отметить вебхук как доставленный."""
-        self.webhook_delivered_at = datetime.utcnow()
+        self.webhook_delivered_at = datetime.now(UTC)
 
     def register_webhook_failure(self, error: str) -> None:
         """Зарегистрировать неудачную попытку доставки вебхука.

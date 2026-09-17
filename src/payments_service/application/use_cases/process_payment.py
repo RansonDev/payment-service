@@ -5,7 +5,12 @@ import json
 from typing import TYPE_CHECKING, final
 from uuid import UUID
 
+import structlog
+
+from payments_service.application.exceptions import WebhookDeliveryError
 from payments_service.domain.value_objects.payment_status import PaymentStatus
+
+logger = structlog.get_logger(__name__)
 
 if TYPE_CHECKING:
     from payments_service.application.interfaces.gateway import (
@@ -45,36 +50,46 @@ class ProcessPaymentUseCase:
             PaymentNotFoundError: Платёж не найден.
             WebhookDeliveryError: Техническая ошибка доставки вебхука.
         """
-        # 1. Получение и проверка статуса
+        # 1. Получение и проверка статуса (без блокировки)
         async with self.uow:
-            payment = await self.uow.payments.get_for_update(payment_id)
- 
+            payment = await self.uow.payments.get_by_id(payment_id)
+
         if payment is None:
-            import structlog
-            structlog.get_logger(__name__).error("payment not found", payment_id=str(payment_id))
+            logger.error("payment not found", payment_id=str(payment_id))
             return
- 
+
         # Идемпотентность: вебхук уже доставлен - это дубликат события
         if payment.webhook_delivered_at is not None:
-            import structlog
-            structlog.get_logger(__name__).info("webhook already delivered", payment_id=str(payment_id))
+            logger.info("webhook already delivered", payment_id=str(payment_id))
             return
 
         # 2. Обработка платежа в шлюзе (если еще не обработан)
         if payment.status is PaymentStatus.PENDING:
+            # Вызов шлюза ВНЕ транзакции
             result = await self.gateway.charge(payment)
 
             async with self.uow:
-                payment = await self.uow.payments.get_for_update(payment_id)
-                if payment is None:
-                    return
+                # Атомарное обновление статуса
+                status = (
+                    PaymentStatus.SUCCEEDED if result.success else PaymentStatus.FAILED
+                )
+                message = None if result.success else result.message
 
-                if result.success:
-                    payment.mark_succeeded()
+                updated = await self.uow.payments.try_mark_processed(
+                    payment_id=payment_id, status=status, message=message
+                )
+
+                if not updated:
+                    # Платёж уже обработан другой доставкой, перечитываем актуальное состояние
+                    payment = await self.uow.payments.get_by_id(payment_id)
+                    if payment is None:
+                        return
                 else:
-                    payment.mark_failed(result.message)
-
-                await self.uow.payments.update(payment)
+                    # Обновляем локальную сущность для формирования вебхука и корректного состояния
+                    if status is PaymentStatus.SUCCEEDED:
+                        payment.mark_succeeded()
+                    else:
+                        payment.mark_failed(message or "Gateway declined payment")
 
         # 3. Подготовка и отправка вебхука
         event_type = (
@@ -102,18 +117,25 @@ class ProcessPaymentUseCase:
         try:
             await self.webhook.send(payment.webhook_url, payload)
 
-            # 4. Успешная доставка
+            # 4. Успешная доставка (атомарно)
             async with self.uow:
-                payment = await self.uow.payments.get_for_update(payment_id)
-                if payment is not None:
+                updated = await self.uow.payments.try_mark_webhook_delivered(payment_id)
+                if updated:
                     payment.mark_webhook_delivered()
-                    await self.uow.payments.update(payment)
 
         except Exception as e:
             # 5. Ошибка доставки - сохраняем состояние попытки
             async with self.uow:
-                payment = await self.uow.payments.get_for_update(payment_id)
+                payment = await self.uow.payments.get_by_id(payment_id)
                 if payment is not None:
                     payment.register_webhook_failure(str(e))
                     await self.uow.payments.update(payment)
-            raise
+
+            # Ретрай только при технических ошибках вебхука.
+            # Остальные ошибки (включая DB) не должны приводить к ретраю вебхука консьюмером.
+            if isinstance(e, WebhookDeliveryError):
+                raise
+
+            logger.exception(
+                "unexpected error in webhook delivery phase", payment_id=str(payment_id)
+            )

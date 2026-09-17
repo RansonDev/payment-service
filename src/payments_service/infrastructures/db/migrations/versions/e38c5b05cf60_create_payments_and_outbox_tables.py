@@ -32,7 +32,7 @@ def upgrade() -> None:
         sa.Column("description", sa.String(), nullable=False),
         sa.Column("metadata", JSONB, nullable=False, server_default="{}"),
         sa.Column(
-            "status", sa.String(length=20), nullable=False, server_default="PENDING"
+            "status", sa.String(length=20), nullable=False, server_default="pending"
         ),
         sa.Column("idempotency_key", sa.String(), nullable=False),
         sa.Column("request_hash", sa.String(), nullable=False),

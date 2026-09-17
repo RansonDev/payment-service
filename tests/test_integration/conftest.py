@@ -1,20 +1,21 @@
 """Fixtures for integration tests."""
 
 import asyncio
-import os
 from collections.abc import AsyncGenerator
+import contextlib
+import os
 from typing import Any
 
 import aio_pika
-import pytest
 from aiohttp import web
+import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from payments_service.infrastructures.db.models.base import Base
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 async def test_db_engine() -> AsyncGenerator[AsyncEngine, None]:
     """PostgreSQL engine for integration tests."""
     # Подключение к running postgres из docker-compose
@@ -47,9 +48,7 @@ async def test_db_engine() -> AsyncGenerator[AsyncEngine, None]:
 @pytest.fixture
 async def test_db_session(test_db_engine: AsyncEngine):
     """Session for each test."""
-    async_session = async_sessionmaker(
-        test_db_engine, expire_on_commit=False
-    )
+    async_session = async_sessionmaker(test_db_engine, expire_on_commit=False)
 
     async with async_session() as session:
         yield session
@@ -61,7 +60,7 @@ async def test_db_session(test_db_engine: AsyncEngine):
         )
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 async def rabbitmq_connection() -> AsyncGenerator[aio_pika.Connection, None]:
     """RabbitMQ connection for integration tests."""
     # Подключение к RabbitMQ из docker-compose
@@ -94,12 +93,9 @@ async def clean_queues(rabbitmq_connection: aio_pika.Connection):
     ]
 
     for queue_name in queue_names:
-        try:
+        with contextlib.suppress(Exception):
             queue = await channel.get_queue(queue_name, ensure=False)
             await queue.purge()
-        except Exception:
-            # Очередь может не существовать
-            pass
 
     await channel.close()
 
@@ -110,17 +106,21 @@ async def fake_webhook_server() -> AsyncGenerator[dict[str, Any], None]:
     import socket
 
     requests: list[dict] = []
-    response_sequence: list[int] = []  # Список статус-кодов для последовательных ответов
+    response_sequence: list[
+        int
+    ] = []  # Список статус-кодов для последовательных ответов
 
     async def handler(request):
         """Handle webhook requests."""
         body = await request.json()
-        requests.append({
-            "method": request.method,
-            "path": request.path,
-            "body": body,
-            "headers": dict(request.headers),
-        })
+        requests.append(
+            {
+                "method": request.method,
+                "path": request.path,
+                "body": body,
+                "headers": dict(request.headers),
+            }
+        )
 
         # Если задана последовательность ответов
         if response_sequence:
@@ -137,7 +137,7 @@ async def fake_webhook_server() -> AsyncGenerator[dict[str, Any], None]:
     await runner.setup()
 
     # Listen on 0.0.0.0 to accept connections from other containers
-    site = web.TCPSite(runner, "0.0.0.0", 9999)
+    site = web.TCPSite(runner, "0.0.0.0", 9999)  # noqa: S104
     await site.start()
 
     # Get container hostname for URL accessible from other containers
@@ -155,10 +155,11 @@ async def fake_webhook_server() -> AsyncGenerator[dict[str, Any], None]:
 @pytest.fixture
 async def get_queue_message_count(rabbitmq_connection: aio_pika.Connection):
     """Helper to get message count in queue."""
+
     async def _get_count(queue_name: str) -> int:
         channel = await rabbitmq_connection.channel()
         try:
-            # В aio-pika declare_queue с passive=True возвращает объект очереди, 
+            # В aio-pika declare_queue с passive=True возвращает объект очереди,
             # у которого есть атрибут declaration_result (после декларации)
             queue = await channel.declare_queue(queue_name, passive=True)
             return queue.declaration_result.message_count
@@ -173,6 +174,7 @@ async def get_queue_message_count(rabbitmq_connection: aio_pika.Connection):
 @pytest.fixture
 async def get_dlq_messages(rabbitmq_connection: aio_pika.Connection):
     """Helper to get messages from DLQ."""
+
     async def _get_messages() -> list[aio_pika.IncomingMessage]:
         channel = await rabbitmq_connection.channel()
         messages = []
@@ -187,7 +189,7 @@ async def get_dlq_messages(rabbitmq_connection: aio_pika.Connection):
                 messages.append(message)
                 await message.ack()
 
-        except Exception:
+        except Exception:  # noqa: S110
             pass
         finally:
             await channel.close()
