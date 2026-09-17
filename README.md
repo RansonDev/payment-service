@@ -21,12 +21,18 @@
 
 ### Быстрый старт
 ```bash
+# Клонируем проект
+git clone https://github.com/RansonDev/payment-service.git
+# Создаем .env
+cp .env.example .env
 # Перейти в директорию проекта
 cd payments_service
-
 # Запустить всё окружение (API, Воркеры, БД, RabbitMQ, Webhook-Echo)
 docker compose up -d
 docker compose ps
+# Можно запустить через make 
+make docker-up
+# Справочные материалы по make ниже
 ```
 > **Важно**: Сервис станет доступен (статус `healthy`), как только запустятся база данных и брокер (обычно 10-20 секунд).
 

@@ -53,7 +53,7 @@ RUN chmod +x /app/entrypoint.sh
 # Install project itself
 RUN uv sync --frozen --no-dev
 
-# Create necessary directories
+# Create necessary directories and set ownership
 RUN mkdir -p /app/logs && chown -R appuser:appuser /app
 
 # Switch to non-root user
@@ -89,15 +89,12 @@ COPY --chown=appuser:appuser docs/ ./docs/
 COPY --chown=appuser:appuser Makefile ./
 COPY --chown=appuser:appuser scripts/entrypoint.sh /app/entrypoint.sh
 
-# Make entrypoint executable (already done in production stage, but let's be safe for dev-only builds)
-USER root
-RUN chmod +x /app/entrypoint.sh
-USER appuser
+# Make entrypoint executable and prepare directories under root
+RUN chmod +x /app/entrypoint.sh && \
+    mkdir -p /app/logs /app/htmlcov && \
+    chown -R appuser:appuser /app
 
-# Create necessary directories
-RUN mkdir -p /app/logs /app/htmlcov && chown -R appuser:appuser /app
-
-# Switch to non-root user
+# Switch to non-root user AT THE VERY END
 USER appuser
 
 # Expose port
