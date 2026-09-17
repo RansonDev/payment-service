@@ -19,6 +19,8 @@ x-app-environment: &app-environment
   POSTGRES_SERVER: ${POSTGRES_SERVER:-postgres}
   POSTGRES_PORT: ${POSTGRES_PORT:-5432}
   POSTGRES_DB: ${POSTGRES_DB:-payments}
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-payments}:${POSTGRES_PASSWORD:-payments}@${POSTGRES_SERVER:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-payments}
+  RUN_MIGRATIONS: ${RUN_MIGRATIONS:-false}
   BROKER_URL: ${BROKER_URL:-amqp://guest:guest@rabbitmq:5672/}
   BROKER_PREFETCH_COUNT: ${BROKER_PREFETCH_COUNT:-10}
   RETRY_TTL_LEVEL_1_MS: ${RETRY_TTL_LEVEL_1_MS:-5000}
@@ -40,6 +42,8 @@ x-app-dev-environment: &app-dev-environment
   POSTGRES_SERVER: ${POSTGRES_SERVER:-postgres}
   POSTGRES_PORT: ${POSTGRES_PORT:-5432}
   POSTGRES_DB: ${POSTGRES_DB:-payments}
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-payments}:${POSTGRES_PASSWORD:-payments}@${POSTGRES_SERVER:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-payments}
+  RUN_MIGRATIONS: ${RUN_MIGRATIONS:-false}
   BROKER_URL: ${BROKER_URL:-amqp://guest:guest@rabbitmq:5672/}
   BROKER_PREFETCH_COUNT: ${BROKER_PREFETCH_COUNT:-10}
   RETRY_TTL_LEVEL_1_MS: ${RETRY_TTL_LEVEL_1_MS:-5000}
@@ -123,9 +127,7 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
+      <<: *common-healthcheck
     networks:
       - payments_service-network
 
@@ -141,6 +143,7 @@ services:
     container_name: payments_service-app
     environment:
       <<: *app-environment
+      RUN_MIGRATIONS: "true"
     depends_on:
 
       postgres:
@@ -165,11 +168,9 @@ services:
       - app_logs:/app/logs
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/docs"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      <<: *common-healthcheck
+      start_period: 15s
     networks:
       - payments_service-network
 
@@ -307,6 +308,8 @@ services:
     volumes:
       - ./scripts:/app/scripts:ro
     restart: unless-stopped
+    healthcheck:
+      test: ["NONE"]
     networks:
       - payments_service-network
 
@@ -327,6 +330,8 @@ services:
     volumes:
       - ./scripts:/app/scripts:ro
     restart: unless-stopped
+    healthcheck:
+      test: ["NONE"]
     networks:
       - payments_service-network
 
@@ -341,6 +346,11 @@ services:
       - ./scripts:/app/scripts:ro
     ports:
       - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     networks:
       - payments_service-network
     restart: unless-stopped

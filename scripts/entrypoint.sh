@@ -4,8 +4,10 @@ set -e
 # Ожидание готовности базы данных (опционально, но полезно)
 # Здесь можно добавить проверку через pg_isready, если установлены postgresql-client
 
-echo "Running database migrations..."
-alembic upgrade head
+if [ "${RUN_MIGRATIONS}" = "true" ]; then
+    echo "Running database migrations..."
+    alembic upgrade head
+fi
 
 echo "Starting service: $@"
 exec "$@"

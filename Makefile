@@ -88,8 +88,8 @@ docker-up:
 	@echo "Starting application and workers..."
 	@echo "Note: Database migrations will be applied automatically via entrypoint.sh"
 	$(DOCKER_COMPOSE) up -d app consumer outbox-publisher webhook-echo
-	@echo "Waiting for services to start (5s)..."
-	@powershell -Command "Start-Sleep -Seconds 5"
+	@echo "Waiting for services to start (15s)..."
+	@powershell -Command "Start-Sleep -Seconds 15"
 	$(DOCKER_COMPOSE) ps
 	@echo "Infrastructure is up."
 
@@ -121,14 +121,14 @@ demo:
 	@echo "[2/7] Starting API, Consumer, Outbox Publisher..."
 	@echo "Note: Database migrations will be applied automatically via entrypoint.sh"
 	$(DOCKER_COMPOSE) up -d app consumer outbox-publisher webhook-echo
-	@echo "Waiting for services to start..."
-	@powershell -Command "Start-Sleep -Seconds 10"
+	@echo "Waiting for services to start (15s)..."
+	@powershell -Command "Start-Sleep -Seconds 15"
 	$(DOCKER_COMPOSE) ps
 	@echo ""
 	@echo "[3/7] Creating test payments..."
 	@echo ""
 	@echo "==> Payment 1: Successful payment"
-	@curl -s -X POST http://localhost:8000/api/payments \
+	@curl -s -X POST http://127.0.0.1:8000/api/payments \
 		-H "Content-Type: application/json" \
 		-H "X-API-Key: test-api-key-12345" \
 		-H "Idempotency-Key: demo-payment-001" \
@@ -136,7 +136,7 @@ demo:
 		| $(PYTHON) -m json.tool
 	@echo ""
 	@echo "==> Payment 2: Idempotent retry (same key, same body)"
-	@curl -s -X POST http://localhost:8000/api/payments \
+	@curl -s -X POST http://127.0.0.1:8000/api/payments \
 		-H "Content-Type: application/json" \
 		-H "X-API-Key: test-api-key-12345" \
 		-H "Idempotency-Key: demo-payment-001" \
@@ -144,7 +144,7 @@ demo:
 		| $(PYTHON) -m json.tool
 	@echo ""
 	@echo "==> Payment 3: Idempotency conflict (same key, different body) - expect 409"
-	@curl -s -X POST http://localhost:8000/api/payments \
+	@curl -s -X POST http://127.0.0.1:8000/api/payments \
 		-H "Content-Type: application/json" \
 		-H "X-API-Key: test-api-key-12345" \
 		-H "Idempotency-Key: demo-payment-001" \
@@ -152,7 +152,7 @@ demo:
 		| $(PYTHON) -m json.tool || echo "(Expected 409 Conflict)"
 	@echo ""
 	@echo "==> Payment 4: Another successful payment"
-	@curl -s -X POST http://localhost:8000/api/payments \
+	@curl -s -X POST http://127.0.0.1:8000/api/payments \
 		-H "Content-Type: application/json" \
 		-H "X-API-Key: test-api-key-12345" \
 		-H "Idempotency-Key: demo-payment-002" \
@@ -165,7 +165,7 @@ demo:
 	@echo "[5/7] Checking payment statuses..."
 	@echo ""
 	@echo "==> Health check:"
-	@curl -s http://localhost:8000/api/health | $(PYTHON) -m json.tool
+	@curl -s http://127.0.0.1:8000/api/health | $(PYTHON) -m json.tool
 	@echo ""
 	@echo "[6/7] Checking webhook deliveries..."
 	@echo ""
@@ -181,8 +181,8 @@ demo:
 	@echo ""
 	@echo "Next steps:"
 	@echo "  - Check logs: make logs"
-	@echo "  - View RabbitMQ UI: http://localhost:15672 (guest/guest)"
-	@echo "  - View API docs: http://localhost:8000/api/docs"
+	@echo "  - View RabbitMQ UI: http://127.0.0.1:15672 (guest/guest)"
+	@echo "  - View API docs: http://127.0.0.1:8000/api/docs"
 	@echo "  - Stop services: make docker-down"
 	@echo ""
 

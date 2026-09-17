@@ -21,10 +21,16 @@
 
 ### Быстрый старт
 ```bash
-# Клонировать и запустить всё окружение (API, Воркеры, БД, RabbitMQ, Webhook-Echo)
+# Перейти в директорию проекта
+cd payments_service
+
+# Запустить всё окружение (API, Воркеры, БД, RabbitMQ, Webhook-Echo)
 docker compose up -d
+docker compose ps
 ```
-- **Документация (Swagger)**: http://localhost:8000/api/docs
+> **Важно**: Сервис станет доступен (статус `healthy`), как только запустятся база данных и брокер (обычно 10-20 секунд).
+
+- **Документация (Swagger)**: http://127.0.0.1:8000/api/docs
 - **Тестовый сервер вебхуков**: `docker compose logs webhook-echo -f`
 
 ### Управление через Makefile
@@ -35,15 +41,20 @@ docker compose up -d
 - `make logs` — просмотр логов всех компонентов в реальном времени.
 
 ### Демонстрация сценария
-1. **Создание платежа**:
+1. **Проверка готовности**: Убедитесь, что сервис запустился (отвечает `ok`):
 ```bash
-curl -X POST http://localhost:8000/api/payments \
+curl http://127.0.0.1:8000/api/health
+```
+2. **Создание платежа**:
+```bash
+curl -X POST http://127.0.0.1:8000/api/payments \
+  -H "Content-Type: application/json" \
   -H "X-API-Key: test-api-key-12345" \
   -H "Idempotency-Key: demo-unique-key-001" \
   -d '{"amount": 150.00, "currency": "RUB", "description": "Оплата заказа", "webhook_url": "http://webhook-echo:8080/hook"}'
 ```
-2. **Проверка идемпотентности**: Повторный запрос с тем же `Idempotency-Key` вернет тот же `payment_id`. Изменение тела запроса при том же ключе вернет `409 Conflict`.
-3. **Результат**: В логах `webhook-echo` появится JSON-уведомление о смене статуса платежа на `succeeded` или `failed`.
+3. **Проверка идемпотентности**: Повторный запрос с тем же `Idempotency-Key` вернет тот же `payment_id`. Изменение тела запроса при том же ключе вернет `409 Conflict`.
+4. **Результат**: В логах `webhook-echo` появится JSON-уведомление о смене статуса платежа на `succeeded` или `failed`.
 
 ## Архитектура
 Проект строго следует принципам Clean Architecture: **Domain** (сущности), **Application** (сценарии), **Infrastructure** (БД, RabbitMQ, HTTP) и **Presentation** (FastAPI).
@@ -90,7 +101,7 @@ curl -X POST http://localhost:8000/api/payments \
 Outbox-паттерн в связке с бизнес-транзакцией, лестница retry-очередей с dead-letter маршрутизацией и перевод сообщений в DLQ после исчерпания попыток в перечисленных библиотеках отсутствуют и реализованы в рамках проекта.
 
 ## Справочник API
-Доступен интерактивный UI: http://localhost:8000/api/docs
+Доступен интерактивный UI: http://127.0.0.1:8000/api/docs
 
 - **POST /api/payments**: Регистрация платежа. Требует заголовки `X-API-Key` и `Idempotency-Key`. Возвращает `202 Accepted`.
 - **GET /api/payments/{id}**: Получение полной информации о платеже и статусе доставки вебхука.
@@ -126,9 +137,10 @@ src/payments_service/
 - **Outbox Publisher**: Лимит попыток публикации в брокер не ограничен (retry до победного); обеспечивает корректную работу при длительной недоступности RabbitMQ.
 - **Безопасность**: Вебхуки отправляются без криптографической подписи; для защиты рекомендуется ограничение доступа по IP.
 - **Эмуляция шлюза**: Вместо внешней интеграции используется эмулятор с настраиваемым шансом успеха (`GATEWAY_SUCCESS_RATE`).
-- **Мониторинг**: Management UI RabbitMQ доступен по адресу http://localhost:15672 (логин/пароль: `guest/guest`).
+- **Мониторинг**: Management UI RabbitMQ доступен по адресу http://127.0.0.1:15672 (логин/пароль: `guest/guest`).
 
 ### Диагностика
+- **Статус сервисов**: `docker compose ps` (убедитесь, что все контейнеры в статусе `Up` или `healthy`).
 - **Просмотр логов**: `docker compose logs -f [app|consumer|outbox-publisher]`
 - **Проверка инвариантов**: В корне проекта доступен `Makefile` с командами проверки состояния.
 - **Windows**: Скрипты `entrypoint.sh` должны иметь LF окончания строк. При отсутствии `make` используйте прямые вызовы `docker compose`.
