@@ -280,6 +280,9 @@ python_functions = "test_*"
 # Async configuration
 asyncio_mode = "auto"
 
+# Environment file for tests (pytest-dotenv)
+env_files = [".env.test"]
+
 # Custom markers
 markers = [
     "asyncio: mark test as async",
@@ -327,6 +330,9 @@ dev = [
     "polyfactory==2.11.0",
     "import-linter>=2.15",
     "vulture>=2.16",
+    "aiohttp>=3.11.15",
+    "python-dotenv>=1.2.3",
+    "pytest-dotenv>=0.5.2",
 ]
 
 [tool.importlinter]

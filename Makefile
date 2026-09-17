@@ -113,7 +113,7 @@ demo:
 	@echo "[4/8] Creating test payments..."
 	@echo ""
 	@echo "==> Payment 1: Successful payment"
-	@curl -s -X POST http://localhost:8000/api/v1/payments \
+	@curl -s -X POST http://localhost:8000/api/payments \
 		-H "Content-Type: application/json" \
 		-H "X-API-Key: test-api-key-12345" \
 		-H "Idempotency-Key: demo-payment-001" \
@@ -121,7 +121,7 @@ demo:
 		| $(PYTHON) -m json.tool
 	@echo ""
 	@echo "==> Payment 2: Idempotent retry (same key, same body)"
-	@curl -s -X POST http://localhost:8000/api/v1/payments \
+	@curl -s -X POST http://localhost:8000/api/payments \
 		-H "Content-Type: application/json" \
 		-H "X-API-Key: test-api-key-12345" \
 		-H "Idempotency-Key: demo-payment-001" \
@@ -129,7 +129,7 @@ demo:
 		| $(PYTHON) -m json.tool
 	@echo ""
 	@echo "==> Payment 3: Idempotency conflict (same key, different body) - expect 409"
-	@curl -s -X POST http://localhost:8000/api/v1/payments \
+	@curl -s -X POST http://localhost:8000/api/payments \
 		-H "Content-Type: application/json" \
 		-H "X-API-Key: test-api-key-12345" \
 		-H "Idempotency-Key: demo-payment-001" \
@@ -137,7 +137,7 @@ demo:
 		| $(PYTHON) -m json.tool || echo "(Expected 409 Conflict)"
 	@echo ""
 	@echo "==> Payment 4: Another successful payment"
-	@curl -s -X POST http://localhost:8000/api/v1/payments \
+	@curl -s -X POST http://localhost:8000/api/payments \
 		-H "Content-Type: application/json" \
 		-H "X-API-Key: test-api-key-12345" \
 		-H "Idempotency-Key: demo-payment-002" \

@@ -583,9 +583,53 @@ uv run pytest --cov=payments_service --cov-report=html
 
 ```bash
 make test-unit         # Только unit-тесты
+make test-integration  # Integration тесты (требует docker compose up -d postgres rabbitmq)
 make test-all          # Все тесты
 make check             # Ruff + Mypy + unit-тесты
 ```
+
+### Integration тесты
+
+Интеграционные тесты проверяют работу системы с реальной инфраструктурой:
+- PostgreSQL (реальная БД, не in-memory)
+- RabbitMQ (реальные очереди и обмены)
+- Retry механизм с TTL-лестницей
+- Dead Letter Queue (DLQ)
+- Transactional Outbox pattern
+
+**Требования:**
+
+```bash
+# Запустить PostgreSQL и RabbitMQ
+docker compose up -d postgres rabbitmq
+
+# Дождаться готовности
+docker compose ps
+```
+
+**Запуск:**
+
+```bash
+# Все integration тесты
+make test-integration
+
+# Или напрямую
+uv run pytest -m integration -v
+
+# Конкретный тест
+uv run pytest tests/test_integration/test_dlq_and_retry.py::test_outbox_mechanism -v
+
+# Через Docker (рекомендуется)
+docker compose --profile test run --rm test pytest tests/test_integration/ -v
+```
+
+**Что покрывают (5 тестов):**
+
+1. `test_retry_mechanism_with_ttl_ladder` - TTL-лестница retry.1→retry.2→retry.3→DLQ (⚠️ ~40 сек)
+2. `test_dlq_receives_message_after_retries` - проверка DLQ headers после 3 попыток
+3. `test_successful_delivery_after_retry` - успешная доставка webhook на 3-й попытке
+4. `test_outbox_mechanism` - Transactional Outbox: fetch/publish/mark
+5. `test_end_to_end_with_dlq` - полный flow: payment → outbox → retry → DLQ
 
 ## Стандарты качества кода
 
